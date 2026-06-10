@@ -1,0 +1,34 @@
+{
+  "href": "https://api.ebay.com/buy/browse/v1/item_summary/search?q=iphone%2015%20pro%20max&limit=2",
+  "total": 2,
+  "limit": 2,
+  "offset": 0,
+  "itemSummaries": [
+    {
+      "itemId": "v1|123456789012|0",
+      "title": "Apple iPhone 15 Pro Max 256GB Unlocked",
+      "price": {
+        "value": "1099.99",
+        "currency": "USD"
+      },
+      "seller": {
+        "username": "sample_seller_one"
+      },
+      "condition": "New",
+      "itemWebUrl": "https://www.ebay.com/itm/example-item-1"
+    },
+    {
+      "itemId": "v1|210987654321|0",
+      "title": "Apple iPhone 15 Pro Max 512GB Factory Unlocked",
+      "price": {
+        "value": "1249.00",
+        "currency": "USD"
+      },
+      "seller": {
+        "username": "sample_seller_two"
+      },
+      "condition": "Open box",
+      "itemWebUrl": "https://www.ebay.com/itm/example-item-2"
+    }
+  ]
+}

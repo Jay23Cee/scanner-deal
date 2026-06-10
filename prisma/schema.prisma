@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model ScanRecord {
+  id                   String            @id @default(cuid())
+  createdAt            DateTime          @default(now())
+  mode                 String
+  query                String
+  selectedCondition    String
+  storePrice           Float
+  sellerShippingCost   Float
+  feeRate              Float
+  packagingCost        Float
+  promotedListingCost  Float
+  safetyBuffer         Float
+  targetProfit         Float
+  estimatedLowPrice    Float
+  estimatedMedianPrice Float
+  estimatedHighPrice   Float
+  suggestedListPrice   Float
+  estimatedProfit      Float
+  roi                  Float
+  confidence           String
+  decision             String
+  reason               String
+  listingCount         Int
+  excludedCount        Int
+  listings             ListingSnapshot[]
+  manualSoldComps      ManualSoldCompSnapshot[]
+}
+
+model ListingSnapshot {
+  id             String     @id @default(cuid())
+  scanId         String
+  title          String
+  price          Float
+  currency       String
+  shippingCost   Float
+  shippingKnown  Boolean    @default(false)
+  totalPrice     Float
+  conditionLabel String
+  conditionId    String?
+  sellerUsername String?
+  sellerFeedbackPercentage Float?
+  itemLocation   Json?
+  itemUrl        String
+  itemId         String
+  matchScore     Float
+  primaryImageUrl String?
+  thumbnailUrl    String?
+  additionalImageUrls Json?
+  itemCreationDate    String?
+  itemOriginDate      String?
+  itemEndDate         String?
+  buyingOptions       Json?
+  scan           ScanRecord @relation(fields: [scanId], references: [id], onDelete: Cascade)
+}
+
+model ManualSoldCompSnapshot {
+  id           String     @id @default(cuid())
+  scanId       String
+  displayOrder Int
+  title        String
+  soldPrice    Float?
+  shippingCost Float?
+  conditionLabel String
+  soldDate     String?
+  notes        String
+  scan         ScanRecord @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@index([scanId, displayOrder])
+}
+
+model SellerConnection {
+  id                    String       @id @default(cuid())
+  singletonKey          String       @unique @default("default")
+  environment           String
+  sellerId              String?
+  sellerLabel           String?
+  encryptedAccessToken  String
+  accessTokenExpiresAt  DateTime
+  encryptedRefreshToken String
+  refreshTokenExpiresAt DateTime?
+  scope                 String
+  lastSyncAt            DateTime?
+  isTokenInvalid        Boolean      @default(false)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  orders                SellerOrder[]
+}
+
+model SellerOrder {
+  id                     String           @id @default(cuid())
+  connectionId           String
+  environment            String
+  orderId                String           @unique
+  creationDate           DateTime
+  lastModifiedDate       DateTime
+  orderFulfillmentStatus String
+  orderPaymentStatus     String
+  buyerUsername          String?
+  currency               String
+  totalAmount            Float
+  lineItemCount          Int
+  salesRecordReference   String?
+  rawOrder               Json
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+  connection             SellerConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, creationDate])
+  @@index([connectionId, lastModifiedDate])
+  @@index([connectionId, orderFulfillmentStatus])
+}
