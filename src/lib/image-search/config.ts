@@ -1,15 +1,20 @@
-import { getCurrentEbayEnvironment } from '@/lib/ebay/auth'
+import { getCurrentEbayEnvironment, getEbayCredentialEnvVarNames } from '@/lib/ebay/auth'
 import { ImageSearchFeatureState } from '@/lib/types'
 
-const IMAGE_SEARCH_REQUIRED_ENV_VARS = [
-  'EBAY_CLIENT_ID',
-  'EBAY_CLIENT_SECRET',
-  'EBAY_MARKETPLACE_ID'
-] as const
 export const IMAGE_SEARCH_UNSUPPORTED_ENVIRONMENT = 'sandbox'
 
+function getImageSearchRequiredEnvVars() {
+  const credentialEnvVars = getEbayCredentialEnvVarNames()
+
+  return [
+    credentialEnvVars.clientIdVarName,
+    credentialEnvVars.clientSecretVarName,
+    'EBAY_MARKETPLACE_ID'
+  ] as const
+}
+
 function getMissingImageSearchConfiguration() {
-  return IMAGE_SEARCH_REQUIRED_ENV_VARS.filter((envVar) => !process.env[envVar]?.trim())
+  return getImageSearchRequiredEnvVars().filter((envVar) => !process.env[envVar]?.trim())
 }
 
 export function getImageSearchFeatureState(): ImageSearchFeatureState {

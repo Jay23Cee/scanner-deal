@@ -8,6 +8,7 @@ import {
   applySearchResponseToSession,
   buildSessionEbayLinks,
   buildPendingSession,
+  createSessionId,
   createDefaultPictureSearchState,
   createDefaultSessionPanelState,
   PictureSearchState,
@@ -27,6 +28,7 @@ import {
   ImageSearchResponsePayload,
   ItemCondition,
   ListingResult,
+  ManualSoldComp,
   SearchFilters,
   SearchMode,
   SearchResponsePayload
@@ -40,6 +42,14 @@ const DEFAULT_IMAGE_SEARCH_FEATURE_STATE: ImageSearchFeatureState = {
   missingConfiguration: []
 }
 
+function revokeObjectUrl(url: string | null) {
+  if (!url || typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') {
+    return
+  }
+
+  URL.revokeObjectURL(url)
+}
+
 type ScannerWorkbenchProps = {
   initialImageSearchFeatureState?: ImageSearchFeatureState
 }
@@ -48,6 +58,7 @@ export function ScannerWorkbench({
   initialImageSearchFeatureState = DEFAULT_IMAGE_SEARCH_FEATURE_STATE
 }: ScannerWorkbenchProps) {
   const queryInputRef = useRef<HTMLInputElement | null>(null)
+  const imagePreviewUrlsRef = useRef<string[]>([])
   const [searchState, setSearchState] = useState<SearchState>({
     mode: 'keyword',
     query: '',
@@ -95,14 +106,28 @@ export function ScannerWorkbench({
   }, [activeSessionId, sessions])
 
   useEffect(() => {
-    const previewUrl = imageSearch.previewUrl
+    const currentPreviewUrls = imageSearch.items
+      .map((item) => item.previewUrl)
+      .filter((previewUrl): previewUrl is string => Boolean(previewUrl))
 
-    return () => {
-      if (previewUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
-        URL.revokeObjectURL(previewUrl)
+    for (const previewUrl of imagePreviewUrlsRef.current) {
+      if (!currentPreviewUrls.includes(previewUrl)) {
+        revokeObjectUrl(previewUrl)
       }
     }
-  }, [imageSearch.previewUrl])
+
+    imagePreviewUrlsRef.current = currentPreviewUrls
+  }, [imageSearch.items])
+
+  useEffect(() => {
+    return () => {
+      for (const previewUrl of imagePreviewUrlsRef.current) {
+        revokeObjectUrl(previewUrl)
+      }
+
+      imagePreviewUrlsRef.current = []
+    }
+  }, [])
 
   function updateSearchFormState(nextState: Partial<SearchState>) {
     setGlobalError(null)
@@ -125,6 +150,19 @@ export function ScannerWorkbench({
     }
 
     return URL.createObjectURL(file)
+  }
+
+  function buildPictureSearchItem(file: File) {
+    return {
+      id: createSessionId(),
+      previewUrl: createImagePreviewUrl(file),
+      previewName: file.name,
+      status: 'queued' as const,
+      detectedTitle: '',
+      fallbackMessage: null,
+      error: null,
+      sessionId: null
+    }
   }
 
   function setWorkflowModeState(nextMode: WorkflowMode) {
@@ -244,8 +282,34 @@ export function ScannerWorkbench({
     onSubmitSearch: runSearch
   })
 
-  async function runImageSearch(file: File | null) {
-    if (!file) {
+  function updateImageSearchItem(
+    itemId: string,
+    updater: (item: PictureSearchState['items'][number]) => PictureSearchState['items'][number]
+  ) {
+    setImageSearch((current) => ({
+      ...current,
+      items: current.items.map((item) => (item.id === itemId ? updater(item) : item))
+    }))
+  }
+
+  function updateImageSearchActiveIndex(index: number) {
+    setImageSearch((current) => ({
+      ...current,
+      activeIndex: index
+    }))
+  }
+
+  function getImageSessionSoldQuery(sessionId: string) {
+    const session = sessions.find((entry) => entry.id === sessionId)
+    if (!session) {
+      return null
+    }
+
+    return session.soldSearchQuery.trim() || session.query.trim() || null
+  }
+
+  async function runImageSearch(files: File[]) {
+    if (files.length === 0) {
       return
     }
 
@@ -256,73 +320,136 @@ export function ScannerWorkbench({
 
     setGlobalError(null)
     setSearchFeedback(null)
+    const nextItems = files.map((file) => buildPictureSearchItem(file))
+    const targetCondition = searchState.condition
+    const shouldFocusFirstSuccess = activeSessionId === null
+    const batchSessionIds: string[] = []
+    let matchedCount = 0
+    let focusedSuccessfulMatch = false
+
     setImageSearch({
-      status: 'uploading',
-      previewUrl: createImagePreviewUrl(file),
-      previewName: file.name,
-      detectedTitle: '',
-      fallbackMessage: null,
-      error: null
+      status: 'processing',
+      items: nextItems,
+      activeIndex: 0
     })
 
-    try {
-      const targetCondition = searchState.condition
-      const formData = new FormData()
-      formData.append('image', file)
-      formData.append('condition', targetCondition)
-
-      const response = await fetch('/api/scanner/image-search', {
-        method: 'POST',
-        body: formData
-      })
-      const payload = (await response.json()) as ImageSearchResponsePayload & { error?: string }
-
-      if (!response.ok) {
-        throw new Error(payload.error ?? 'Image search failed.')
+    for (const [itemIndex, file] of files.entries()) {
+      const nextItem = nextItems[itemIndex]
+      if (!nextItem) {
+        continue
       }
 
-      const detectedTitle = payload.detectedTitle.trim()
-      const fallbackMessage = payload.fallbackMessage?.trim() || DEFAULT_IMAGE_SEARCH_FALLBACK_MESSAGE
-
-      setImageSearch((current) => ({
+      updateImageSearchItem(nextItem.id, (current) => ({
         ...current,
-        status: 'ready',
-        detectedTitle,
-        fallbackMessage: payload.session ? null : fallbackMessage,
-        error: null
-      }))
-
-      if (!payload.session) {
-        setSearchFeedback(null)
-        return
-      }
-
-      const nextSession = applySearchResponseToSession(
-        buildPendingSession(
-          {
-            mode: 'keyword',
-            query: payload.session.query,
-            condition: targetCondition
-          },
-          {
-            source: 'image'
-          }
-        ),
-        payload.session
-      )
-
-      setWorkflowModeState('quick_check')
-      setActiveSessionId(nextSession.id)
-      setSessions((current) => [nextSession, ...current])
-      setSearchFeedback('Picture search added to board.')
-    } catch (nextError) {
-      setImageSearch((current) => ({
-        ...current,
-        status: 'error',
+        status: 'uploading',
         detectedTitle: '',
-        fallbackMessage: DEFAULT_IMAGE_SEARCH_FALLBACK_MESSAGE,
-        error: nextError instanceof Error ? nextError.message : 'Image search failed.'
+        fallbackMessage: null,
+        error: null,
+        sessionId: null
       }))
+
+      try {
+        const formData = new FormData()
+        formData.append('image', file)
+        formData.append('condition', targetCondition)
+
+        const response = await fetch('/api/scanner/image-search', {
+          method: 'POST',
+          body: formData
+        })
+        const payload = (await response.json()) as ImageSearchResponsePayload & { error?: string }
+
+        if (!response.ok) {
+          updateImageSearchItem(nextItem.id, (current) => ({
+            ...current,
+            status: 'error',
+            detectedTitle: '',
+            fallbackMessage: payload.fallbackMessage?.trim() || DEFAULT_IMAGE_SEARCH_FALLBACK_MESSAGE,
+            error: payload.error ?? 'Image search failed.',
+            sessionId: null
+          }))
+          continue
+        }
+
+        const detectedTitle = payload.detectedTitle.trim()
+        const fallbackMessage = payload.fallbackMessage?.trim() || DEFAULT_IMAGE_SEARCH_FALLBACK_MESSAGE
+
+        if (!payload.session) {
+          updateImageSearchItem(nextItem.id, (current) => ({
+            ...current,
+            status: 'no_match',
+            detectedTitle,
+            fallbackMessage,
+            error: null,
+            sessionId: null
+          }))
+          continue
+        }
+
+        const nextSession = applySearchResponseToSession(
+          buildPendingSession(
+            {
+              mode: 'keyword',
+              query: payload.session.query,
+              condition: targetCondition
+            },
+            {
+              source: 'image'
+            }
+          ),
+          payload.session
+        )
+        const previousBatchSessionId = batchSessionIds[batchSessionIds.length - 1] ?? null
+        batchSessionIds.push(nextSession.id)
+        matchedCount += 1
+
+        setSessions((current) => {
+          const nextSessions = [...current]
+          const anchorIndex = previousBatchSessionId
+            ? nextSessions.findIndex((session) => session.id === previousBatchSessionId)
+            : -1
+          const insertIndex = anchorIndex >= 0 ? anchorIndex + 1 : 0
+          nextSessions.splice(insertIndex, 0, nextSession)
+          return nextSessions
+        })
+
+        if (shouldFocusFirstSuccess && !focusedSuccessfulMatch) {
+          setWorkflowModeState('quick_check')
+          setActiveSessionId(nextSession.id)
+          focusedSuccessfulMatch = true
+        }
+
+        updateImageSearchItem(nextItem.id, (current) => ({
+          ...current,
+          status: 'ready',
+          detectedTitle,
+          fallbackMessage: null,
+          error: null,
+          sessionId: nextSession.id
+        }))
+      } catch (nextError) {
+        updateImageSearchItem(nextItem.id, (current) => ({
+          ...current,
+          status: 'error',
+          detectedTitle: '',
+          fallbackMessage: DEFAULT_IMAGE_SEARCH_FALLBACK_MESSAGE,
+          error: nextError instanceof Error ? nextError.message : 'Image search failed.',
+          sessionId: null
+        }))
+      }
+    }
+
+    setImageSearch((current) => ({
+      ...current,
+      status: 'complete'
+    }))
+
+    if (matchedCount > 0) {
+      setSearchFeedback(
+        matchedCount === 1
+          ? 'Picture search added to board.'
+          : `${matchedCount} picture searches added to board.`
+      )
     }
   }
 
@@ -403,6 +530,7 @@ export function ScannerWorkbench({
           query: session.query,
           condition: session.condition,
           ...session.appliedFilters,
+          soldSearchQuery: session.soldSearchQuery.trim() || session.query.trim(),
           storePrice: session.storePrice,
           sellerShippingCost,
           feeRate,
@@ -490,6 +618,27 @@ export function ScannerWorkbench({
     }))
   }
 
+  function updateSessionManualSoldComp(
+    sessionId: string,
+    compIndex: number,
+    patch: Partial<ManualSoldComp>
+  ) {
+    updateSession(sessionId, (current) => ({
+      ...current,
+      manualSoldComps: current.manualSoldComps.map((comp, index) =>
+        index === compIndex
+          ? {
+              ...comp,
+              ...patch
+            }
+          : comp
+      ),
+      analysis: null,
+      error: null,
+      updatedAt: new Date().toISOString()
+    }))
+  }
+
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null
   const orderedSessions =
     workflowMode !== 'board_view' && activeSession
@@ -513,7 +662,10 @@ export function ScannerWorkbench({
         imageSearchUnavailableMessage={imageSearchUnavailableMessage}
         onSearchStateChange={updateSearchFormState}
         onWorkflowModeChange={setWorkflowModeState}
-        onImageFileSelected={(file) => void runImageSearch(file)}
+        onImageFilesSelected={(files) => void runImageSearch(files)}
+        onImageSearchActiveIndexChange={updateImageSearchActiveIndex}
+        onFocusImageSession={activateSession}
+        getImageSessionSoldQuery={getImageSessionSoldQuery}
       />
 
       <section className="stack">
@@ -557,6 +709,7 @@ export function ScannerWorkbench({
                 onRawListingsActiveIndexChange={updateSessionRawListingsActiveIndex}
                 onSelectedListingsActiveIndexChange={updateSessionSelectedListingsActiveIndex}
                 onSoldSearchQueryChange={updateSessionSoldSearchQuery}
+                onManualSoldCompChange={updateSessionManualSoldComp}
                 onRunAnalysis={(sessionId) => void runAnalysis(sessionId)}
               />
             ))}

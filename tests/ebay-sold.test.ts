@@ -4,7 +4,7 @@ import { deriveEbaySoldSearchQuery, buildEbaySoldUrl } from '@/lib/ebay/sold'
 describe('eBay sold listing helpers', () => {
   it('builds the sold/completed eBay URL with an encoded query', () => {
     expect(buildEbaySoldUrl('sony wh-1000xm4')).toBe(
-      'https://www.ebay.com/sch/i.html?_nkw=sony+wh-1000xm4&LH_Sold=1&LH_Complete=1'
+      'https://www.ebay.com/sch/i.html?_nkw=sony+wh-1000xm4&_ipg=120&LH_Sold=1&LH_Complete=1'
     )
   })
 

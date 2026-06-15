@@ -4,7 +4,7 @@ import { cleanup, createEvent, fireEvent, render, screen, waitFor, within } from
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ScannerWorkbench } from '@/components/scanner/ScannerWorkbench'
-import { buildEbayActiveSearchUrl, buildEbaySoldCompsUrl } from '@/lib/ebayLinks'
+import { buildEbayActiveSearchUrl, buildSoldCompsHandoffPath } from '@/lib/ebayLinks'
 import {
   DealAnalysisPayload,
   ImageSearchResponsePayload,
@@ -134,6 +134,26 @@ function getVisibleSearchButton() {
   return screen.getByRole('button', { name: 'Check Item' })
 }
 
+function getTakePhotoButton() {
+  return screen.getByRole('button', { name: 'Take Photo' })
+}
+
+function getChoosePhotoButton() {
+  return screen.getByRole('button', { name: 'Choose Photo' })
+}
+
+function getTakePhotoInput() {
+  return screen.getByLabelText('Take Photo', { selector: 'input' }) as HTMLInputElement
+}
+
+function getChoosePhotoInput() {
+  return screen.getByLabelText('Choose Photo', { selector: 'input' }) as HTMLInputElement
+}
+
+function getPictureSearchDeck() {
+  return screen.getByRole('region', { name: 'Picture search results swipe deck' })
+}
+
 function getActiveSessionCard() {
   return document.querySelector('article.session-card--active') as HTMLElement | null
 }
@@ -146,10 +166,11 @@ describe('ScannerWorkbench mobile submit behavior', () => {
   beforeEach(() => {
     window.localStorage.clear()
     vi.restoreAllMocks()
+    let previewCounter = 0
     vi.stubGlobal(
       'URL',
       Object.assign(URL, {
-        createObjectURL: vi.fn(() => 'blob:preview-image'),
+        createObjectURL: vi.fn(() => `blob:preview-image-${++previewCounter}`),
         revokeObjectURL: vi.fn()
       })
     )
@@ -637,13 +658,14 @@ describe('ScannerWorkbench mobile submit behavior', () => {
       expect(card).toBeTruthy()
       return card!
     })
-    const soldCompsButton = within(activeCard).getByRole('button', { name: 'Open Sold Comps' })
+    const soldCompsButton = within(activeCard).getByRole('link', { name: 'Open Sold Comps' })
     const activeListingsButton = within(activeCard).getByRole('button', { name: 'Open Active Listings' })
     const searchWordsInput = within(activeCard).getByLabelText('Search words')
     const handoffTitle = within(activeCard).getByText('Refine the eBay handoff')
     const resultSummary = within(activeCard).getByText('Result summary')
 
     expect(soldCompsButton).toBeTruthy()
+    expect(soldCompsButton.getAttribute('href')).toBe(buildSoldCompsHandoffPath('iphone 15 pro max'))
     expect(activeListingsButton).toBeTruthy()
     expect((searchWordsInput as HTMLInputElement).value).toBe('iphone 15 pro max')
     expect(Boolean(handoffTitle.compareDocumentPosition(resultSummary) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
@@ -670,6 +692,85 @@ describe('ScannerWorkbench mobile submit behavior', () => {
     expect(within(getActiveSessionCard()!).getAllByText('BUY').length).toBeGreaterThan(0)
   })
 
+  it('submits sold-search query and manual sold comps with the analysis request', async () => {
+    const user = userEvent.setup()
+    let analysisRequestBody: Record<string, unknown> | null = null
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+      if (url.endsWith('/api/ebay/search')) {
+        return new Response(
+          JSON.stringify(
+            buildSearchResponse({
+              totalReturned: 1,
+              rawListings: [buildListing('1')],
+              suggestedComparisonItemIds: ['1']
+            })
+          ),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        )
+      }
+
+      if (url.endsWith('/api/deal/analyze')) {
+        analysisRequestBody = JSON.parse(String(init?.body))
+
+        return new Response(JSON.stringify(buildAnalysisResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+
+      throw new Error(`Unexpected fetch url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    await user.type(screen.getByLabelText('Keyword'), 'iphone 15 pro max')
+    await user.click(getVisibleSearchButton())
+    await screen.findByText('Current check status')
+
+    const activeCard = getActiveSessionCard()!
+
+    await user.clear(within(activeCard).getByLabelText('Search words'))
+    await user.type(within(activeCard).getByLabelText('Search words'), 'iphone 15 pro max 256gb unlocked')
+    await user.click(within(activeCard).getByRole('button', { name: 'Add to comparison' }))
+    await user.click(within(activeCard).getByRole('button', { name: /Analysis inputs/i }))
+    await user.clear(screen.getByLabelText('Store price'))
+    await user.type(screen.getByLabelText('Store price'), '95')
+    await user.type(screen.getByLabelText('Comp 1 title'), 'Sold comp from eBay')
+    await user.type(screen.getByLabelText('Comp 1 sold price'), '760')
+    await user.type(screen.getByLabelText('Comp 1 shipping'), '15')
+    await user.type(screen.getByLabelText('Comp 1 condition'), 'Used')
+    await user.type(screen.getByLabelText('Comp 1 sold date'), '2026-06-03')
+    await user.type(screen.getByLabelText('Comp 1 notes'), 'Clean comp with box')
+    await user.click(screen.getByRole('button', { name: 'Analyze deal' }))
+
+    await screen.findByText('Latest deal snapshot')
+    expect(analysisRequestBody).toMatchObject({
+      soldSearchQuery: 'iphone 15 pro max 256gb unlocked',
+      storePrice: 95,
+      comparisonListings: [expect.objectContaining({ itemId: '1' })]
+    })
+
+    const manualSoldComps = (
+      analysisRequestBody as { manualSoldComps?: Array<Record<string, unknown>> } | null
+    )?.manualSoldComps
+
+    expect(manualSoldComps?.[0]).toEqual({
+      title: 'Sold comp from eBay',
+      soldPrice: 760,
+      shippingCost: 15,
+      condition: 'Used',
+      soldDate: '2026-06-03',
+      notes: 'Clean comp with box'
+    })
+    expect(manualSoldComps?.length).toBe(3)
+  })
+
   it('uploads a picture into a focused image session without calling the keyword search route', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -691,16 +792,19 @@ describe('ScannerWorkbench mobile submit behavior', () => {
 
     render(<ScannerWorkbench />)
 
-    const pictureInput = screen.getByLabelText('Take or upload picture') as HTMLInputElement
-    await user.upload(pictureInput, new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
+    await user.upload(getTakePhotoInput(), new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
 
     await screen.findByText('Picture search added to board.')
 
+    const pictureDeck = getPictureSearchDeck()
     const activeCard = getActiveSessionCard()
+    expect(within(pictureDeck).getByText('calculator.png')).toBeTruthy()
+    expect(within(pictureDeck).getByRole('link', { name: 'Open Sold Comps' })).toBeTruthy()
+    expect(within(pictureDeck).getByRole('button', { name: 'Focus session' })).toBeTruthy()
     expect(activeCard).toBeTruthy()
     expect(within(activeCard!).getAllByText('Texas Instruments TI 84 Plus CE Graphing Calculator Black').length).toBeGreaterThan(0)
     expect(within(activeCard!).getByText('Picture search')).toBeTruthy()
-    expect(screen.getByText('Search added')).toBeTruthy()
+    expect(screen.getAllByText('Search added').length).toBeGreaterThan(0)
 
     expect(
       fetchMock.mock.calls.some((call) => {
@@ -709,6 +813,405 @@ describe('ScannerWorkbench mobile submit behavior', () => {
         return url.endsWith('/api/ebay/search')
       })
     ).toBe(false)
+  })
+
+  it('enables multi-select only on the choose photo picker and uses the shared batch review deck', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+      if (url.endsWith('/api/scanner/image-search')) {
+        return new Response(JSON.stringify(buildImageSearchResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+
+      throw new Error(`Unexpected fetch url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    const takePhotoInput = getTakePhotoInput()
+    const choosePhotoInput = getChoosePhotoInput()
+
+    expect(getTakePhotoButton()).toBeTruthy()
+    expect(getChoosePhotoButton()).toBeTruthy()
+    expect(takePhotoInput.getAttribute('accept')).toBe('image/*')
+    expect(takePhotoInput.getAttribute('capture')).toBe('environment')
+    expect(takePhotoInput.multiple).toBe(false)
+    expect(choosePhotoInput.getAttribute('accept')).toBe('image/*')
+    expect(choosePhotoInput.getAttribute('capture')).toBeNull()
+    expect(choosePhotoInput.multiple).toBe(true)
+
+    await user.upload(choosePhotoInput, new File(['image-bytes'], 'calculator-library.png', { type: 'image/png' }))
+
+    await screen.findByText('Picture search added to board.')
+    expect(within(getPictureSearchDeck()).getByText('calculator-library.png')).toBeTruthy()
+    expect(screen.getAllByText('Search added').length).toBeGreaterThan(0)
+  })
+
+  it('does not show sold comps actions while photo batch items are still uploading or queued', async () => {
+    const user = userEvent.setup()
+    const deferred = createDeferredResponse()
+    const fetchMock = vi.fn().mockReturnValue(deferred.promise)
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    await user.upload(getChoosePhotoInput(), [
+      new File(['image-1'], 'queued-1.png', { type: 'image/png' }),
+      new File(['image-2'], 'queued-2.png', { type: 'image/png' })
+    ])
+
+    await waitFor(() => expect(screen.getByText(/Processing 0 of 2/i)).toBeTruthy())
+    expect(within(getPictureSearchDeck()).queryByRole('link', { name: 'Open Sold Comps' })).toBeNull()
+
+    deferred.resolve(
+      new Response(
+        JSON.stringify(
+          buildImageSearchResponse({
+            detectedTitle: '',
+            session: null,
+            fallbackMessage: 'Could not confidently identify this item. Try retaking the picture or use keyword search above.'
+          })
+        ),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      )
+    )
+  })
+
+  it('processes multiple chosen photos sequentially and keeps mixed outcomes visible in the swipe deck', async () => {
+    const user = userEvent.setup()
+    const requestedFileNames: string[] = []
+    const imageResponses = [
+      buildImageSearchResponse({
+        detectedTitle: 'Canon AE-1 Program 35mm Camera Body',
+        session: buildSearchResponse({
+          query: 'Canon AE-1 Program 35mm Camera Body',
+          totalReturned: 1,
+          rawListings: [buildListing('camera-1', 'Canon AE-1 Program 35mm Camera Body')],
+          suggestedComparisonItemIds: ['camera-1']
+        })
+      }),
+      buildImageSearchResponse({
+        detectedTitle: '',
+        session: null,
+        fallbackMessage: 'Could not confidently identify this item. Try retaking the picture or use keyword search above.'
+      }),
+      buildImageSearchResponse({
+        detectedTitle: 'Sony PSP 3000 Black Console',
+        session: buildSearchResponse({
+          query: 'Sony PSP 3000 Black Console',
+          totalReturned: 1,
+          rawListings: [buildListing('psp-1', 'Sony PSP 3000 Black Console')],
+          suggestedComparisonItemIds: ['psp-1']
+        })
+      })
+    ]
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+      if (url.endsWith('/api/scanner/image-search')) {
+        const body = init?.body as FormData
+        const image = body.get('image')
+        requestedFileNames.push(image instanceof File ? image.name : 'unknown')
+
+        return new Response(JSON.stringify(imageResponses.shift()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+
+      throw new Error(`Unexpected fetch url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    await user.upload(getChoosePhotoInput(), [
+      new File(['image-1'], 'camera.png', { type: 'image/png' }),
+      new File(['image-2'], 'mystery-item.png', { type: 'image/png' }),
+      new File(['image-3'], 'psp.png', { type: 'image/png' })
+    ])
+
+    await screen.findByText('2 picture searches added to board.')
+
+    expect(requestedFileNames).toEqual(['camera.png', 'mystery-item.png', 'psp.png'])
+    expect(screen.getByText('2 matched / 1 no match')).toBeTruthy()
+    expect(within(getPictureSearchDeck()).getByText('camera.png')).toBeTruthy()
+    expect(screen.getAllByText('Canon AE-1 Program 35mm Camera Body').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Sony PSP 3000 Black Console').length).toBeGreaterThan(0)
+    expect(screen.getByText(/Could not confidently identify this item/i)).toBeTruthy()
+    expect(screen.getByText('1 / 3')).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Next photo result' }))
+    expect(screen.getByText('2 / 3')).toBeTruthy()
+
+    const sessionTitles = Array.from(
+      document.querySelectorAll('article.session-card > button.session-card__toggle h3')
+    ).map((node) => node.textContent?.trim())
+    expect(sessionTitles.slice(0, 2)).toEqual([
+      'Canon AE-1 Program 35mm Camera Body',
+      'Sony PSP 3000 Black Console'
+    ])
+    expect(within(getActiveSessionCard()!).getAllByText('Canon AE-1 Program 35mm Camera Body').length).toBeGreaterThan(0)
+  })
+
+  it('opens sold comps from a matched photo slide using the linked session query', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+      if (url.endsWith('/api/scanner/image-search')) {
+        return new Response(
+          JSON.stringify(
+            buildImageSearchResponse({
+              detectedTitle: 'Canon AE-1 Program 35mm Camera Body',
+              session: buildSearchResponse({
+                query: 'Canon AE-1 Program 35mm Camera Body',
+                totalReturned: 1,
+                rawListings: [buildListing('camera-1', 'Canon AE-1 Program 35mm Camera Body')],
+                suggestedComparisonItemIds: ['camera-1']
+              })
+            })
+          ),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        )
+      }
+
+      throw new Error(`Unexpected fetch url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    await user.upload(getTakePhotoInput(), new File(['image-bytes'], 'camera.png', { type: 'image/png' }))
+    await screen.findByText('Picture search added to board.')
+
+    const soldCompsLink = within(getPictureSearchDeck()).getByRole('link', { name: 'Open Sold Comps' })
+    expect(soldCompsLink.getAttribute('href')).toBe(
+      buildSoldCompsHandoffPath('Canon AE-1 Program 35mm Camera Body')
+    )
+    expect(soldCompsLink.getAttribute('target')).toBe('_blank')
+    expect(soldCompsLink.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+
+  it('uses the updated linked session sold-search query from the photo slide sold comps button', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+      if (url.endsWith('/api/scanner/image-search')) {
+        return new Response(JSON.stringify(buildImageSearchResponse()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+
+      throw new Error(`Unexpected fetch url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    await user.upload(getTakePhotoInput(), new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
+    await screen.findByText('Picture search added to board.')
+
+    const activeCard = getActiveSessionCard()!
+    await user.clear(within(activeCard).getByLabelText('Detected search words'))
+    await user.type(
+      within(activeCard).getByLabelText('Detected search words'),
+      'ti 84 plus ce python edition'
+    )
+
+    const soldCompsLink = within(getPictureSearchDeck()).getByRole('link', { name: 'Open Sold Comps' })
+    expect(soldCompsLink.getAttribute('href')).toBe(
+      buildSoldCompsHandoffPath('ti 84 plus ce python edition')
+    )
+  })
+
+  it('preserves the current active session during a batch and lets the swipe deck focus a matched session on demand', async () => {
+    const user = userEvent.setup()
+    const imageResponses = [
+      buildImageSearchResponse({
+        detectedTitle: 'Nintendo DS Lite Crimson Black',
+        session: buildSearchResponse({
+          query: 'Nintendo DS Lite Crimson Black',
+          totalReturned: 1,
+          rawListings: [buildListing('ds-1', 'Nintendo DS Lite Crimson Black')],
+          suggestedComparisonItemIds: ['ds-1']
+        })
+      }),
+      buildImageSearchResponse({
+        detectedTitle: 'Bose QuietComfort 35 II Headphones',
+        session: buildSearchResponse({
+          query: 'Bose QuietComfort 35 II Headphones',
+          totalReturned: 1,
+          rawListings: [buildListing('bose-1', 'Bose QuietComfort 35 II Headphones')],
+          suggestedComparisonItemIds: ['bose-1']
+        })
+      })
+    ]
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+      if (url.endsWith('/api/ebay/search')) {
+        return new Response(
+          JSON.stringify(
+            buildSearchResponse({
+              query: 'existing query',
+              totalReturned: 1,
+              rawListings: [buildListing('existing-1', 'Existing Query Listing')]
+            })
+          ),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        )
+      }
+
+      if (url.endsWith('/api/scanner/image-search')) {
+        const body = init?.body as FormData
+        expect(body.get('condition')).toBe('used')
+
+        return new Response(JSON.stringify(imageResponses.shift()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+
+      throw new Error(`Unexpected fetch url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    await user.type(screen.getByLabelText('Keyword'), 'existing query')
+    await user.click(getVisibleSearchButton())
+    await screen.findByText('Search added to board.')
+
+    await user.upload(getChoosePhotoInput(), [
+      new File(['image-1'], 'ds.png', { type: 'image/png' }),
+      new File(['image-2'], 'bose.png', { type: 'image/png' })
+    ])
+
+    await screen.findByText('2 picture searches added to board.')
+
+    expect(within(getActiveSessionCard()!).getAllByText('existing query').length).toBeGreaterThan(0)
+    expect(document.querySelectorAll('article.session-card').length).toBe(3)
+
+    const focusButtons = within(getPictureSearchDeck()).getAllByRole('button', { name: 'Focus session' })
+    await user.click(focusButtons[1]!)
+
+    await waitFor(() =>
+      expect(within(getActiveSessionCard()!).getAllByText('Bose QuietComfort 35 II Headphones').length).toBeGreaterThan(0)
+    )
+  })
+
+  it('does not show sold comps actions for no-match or error photo slides', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+      if (url.endsWith('/api/scanner/image-search')) {
+        const callIndex = fetchMock.mock.calls.length
+
+        if (callIndex === 1) {
+          return new Response(
+            JSON.stringify(
+              buildImageSearchResponse({
+                detectedTitle: '',
+                session: null,
+                fallbackMessage: 'Could not confidently identify this item. Try retaking the picture or use keyword search above.'
+              })
+            ),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        return new Response(
+          JSON.stringify({
+            error: 'Image search failed from eBay.',
+            fallbackMessage: 'Could not confidently identify this item. Try retaking the picture or use keyword search above.'
+          }),
+          {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        )
+      }
+
+      throw new Error(`Unexpected fetch url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    await user.upload(getChoosePhotoInput(), [
+      new File(['image-1'], 'mystery-item.png', { type: 'image/png' }),
+      new File(['image-2'], 'broken-item.png', { type: 'image/png' })
+    ])
+
+    await screen.findByText('Image search failed from eBay.')
+    expect(within(getPictureSearchDeck()).queryByRole('link', { name: 'Open Sold Comps' })).toBeNull()
+    expect(within(getPictureSearchDeck()).queryByRole('button', { name: 'Focus session' })).toBeNull()
+  })
+
+  it('replaces the current picture batch deck when a new gallery selection is made without deleting prior sessions', async () => {
+    const user = userEvent.setup()
+    const imageResponses = [
+      buildImageSearchResponse({
+        detectedTitle: 'Texas Instruments TI 30X IIS Calculator',
+        session: buildSearchResponse({
+          query: 'Texas Instruments TI 30X IIS Calculator',
+          totalReturned: 1,
+          rawListings: [buildListing('calc-1', 'Texas Instruments TI 30X IIS Calculator')],
+          suggestedComparisonItemIds: ['calc-1']
+        })
+      }),
+      buildImageSearchResponse({
+        detectedTitle: '',
+        session: null,
+        fallbackMessage: 'Could not confidently identify this item. Try retaking the picture or use keyword search above.'
+      })
+    ]
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+      if (url.endsWith('/api/scanner/image-search')) {
+        return new Response(JSON.stringify(imageResponses.shift()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+
+      throw new Error(`Unexpected fetch url: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ScannerWorkbench />)
+
+    await user.upload(getChoosePhotoInput(), new File(['image-1'], 'first-batch.png', { type: 'image/png' }))
+    await screen.findByText('Picture search added to board.')
+    expect(within(getPictureSearchDeck()).getByText('first-batch.png')).toBeTruthy()
+
+    await user.upload(getChoosePhotoInput(), new File(['image-2'], 'replacement-batch.png', { type: 'image/png' }))
+
+    expect(await screen.findByText('replacement-batch.png')).toBeTruthy()
+    expect(screen.queryByText('first-batch.png')).toBeNull()
+    expect(document.querySelectorAll('article.session-card').length).toBe(1)
   })
 
   it('shows picture search as unavailable and prevents uploads when the feature is not configured', async () => {
@@ -725,7 +1228,8 @@ describe('ScannerWorkbench mobile submit behavior', () => {
       />
     )
 
-    const pictureInput = screen.getByLabelText('Take or upload picture') as HTMLInputElement
+    const takePhotoInput = getTakePhotoInput()
+    const choosePhotoInput = getChoosePhotoInput()
 
     expect(screen.getByText('Unavailable')).toBeTruthy()
     expect(
@@ -733,9 +1237,12 @@ describe('ScannerWorkbench mobile submit behavior', () => {
         'Picture search is unavailable until EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, EBAY_MARKETPLACE_ID is configured. Use keyword search above in the meantime.'
       )
     ).toBeTruthy()
-    expect(pictureInput).toHaveProperty('disabled', true)
+    expect(getTakePhotoButton()).toHaveProperty('disabled', true)
+    expect(getChoosePhotoButton()).toHaveProperty('disabled', true)
+    expect(takePhotoInput).toHaveProperty('disabled', true)
+    expect(choosePhotoInput).toHaveProperty('disabled', true)
 
-    await user.upload(pictureInput, new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
+    await user.upload(takePhotoInput, new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
 
     expect(fetchMock).toHaveBeenCalledTimes(0)
   })
@@ -754,7 +1261,8 @@ describe('ScannerWorkbench mobile submit behavior', () => {
       />
     )
 
-    const pictureInput = screen.getByLabelText('Take or upload picture') as HTMLInputElement
+    const takePhotoInput = getTakePhotoInput()
+    const choosePhotoInput = getChoosePhotoInput()
 
     expect(screen.getByText('Unavailable')).toBeTruthy()
     expect(
@@ -762,14 +1270,17 @@ describe('ScannerWorkbench mobile submit behavior', () => {
         'Picture search requires EBAY_ENV=production because eBay image search is not available in sandbox. Use keyword search above in the meantime.'
       )
     ).toBeTruthy()
-    expect(pictureInput).toHaveProperty('disabled', true)
+    expect(getTakePhotoButton()).toHaveProperty('disabled', true)
+    expect(getChoosePhotoButton()).toHaveProperty('disabled', true)
+    expect(takePhotoInput).toHaveProperty('disabled', true)
+    expect(choosePhotoInput).toHaveProperty('disabled', true)
 
-    await user.upload(pictureInput, new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
+    await user.upload(choosePhotoInput, new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
 
     expect(fetchMock).toHaveBeenCalledTimes(0)
   })
 
-  it('shows the detected image title in the preview panel after a successful match', async () => {
+  it('shows the detected image title in the batch review panel after a successful match', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
@@ -787,8 +1298,7 @@ describe('ScannerWorkbench mobile submit behavior', () => {
 
     render(<ScannerWorkbench />)
 
-    const pictureInput = screen.getByLabelText('Take or upload picture') as HTMLInputElement
-    await user.upload(pictureInput, new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
+    await user.upload(getTakePhotoInput(), new File(['image-bytes'], 'calculator.png', { type: 'image/png' }))
 
     expect(await screen.findByText('Detected item')).toBeTruthy()
     expect(screen.getAllByText('Texas Instruments TI 84 Plus CE Graphing Calculator Black').length).toBeGreaterThan(1)
@@ -821,8 +1331,7 @@ describe('ScannerWorkbench mobile submit behavior', () => {
 
     render(<ScannerWorkbench />)
 
-    const pictureInput = screen.getByLabelText('Take or upload picture') as HTMLInputElement
-    await user.upload(pictureInput, new File(['image-bytes'], 'mystery-item.png', { type: 'image/png' }))
+    await user.upload(getChoosePhotoInput(), new File(['image-bytes'], 'mystery-item.png', { type: 'image/png' }))
 
     expect(await screen.findByText(/Could not confidently identify this item/i)).toBeTruthy()
     expect(screen.queryByText('Picture search added to board.')).toBeNull()
@@ -849,14 +1358,12 @@ describe('ScannerWorkbench mobile submit behavior', () => {
     await screen.findByText('Current check status')
 
     const activeCard = getActiveSessionCard()!
-    await user.click(within(activeCard).getByRole('button', { name: 'Open Sold Comps' }))
+    const soldCompsLink = within(activeCard).getByRole('link', { name: 'Open Sold Comps' })
     await user.click(within(activeCard).getByRole('button', { name: 'Open Active Listings' }))
 
-    expect(windowOpenSpy).toHaveBeenCalledWith(
-      buildEbaySoldCompsUrl('iphone 15 pro max'),
-      '_blank',
-      'noopener,noreferrer'
-    )
+    expect(soldCompsLink.getAttribute('href')).toBe(buildSoldCompsHandoffPath('iphone 15 pro max'))
+    expect(soldCompsLink.getAttribute('target')).toBe('_blank')
+    expect(soldCompsLink.getAttribute('rel')).toBe('noopener noreferrer')
     expect(windowOpenSpy).toHaveBeenCalledWith(
       buildEbayActiveSearchUrl('iphone 15 pro max'),
       '_blank',
@@ -865,7 +1372,7 @@ describe('ScannerWorkbench mobile submit behavior', () => {
     expect(within(activeCard).queryByText('Allow pop-ups to open eBay in a new tab.')).toBeNull()
   })
 
-  it('shows a warning and stays on the scanner page when the popup is blocked', async () => {
+  it('shows a warning and stays on the scanner page when the active listings popup is blocked', async () => {
     const user = userEvent.setup()
     const startingHref = window.location.href
     vi.spyOn(window, 'open').mockImplementation(() => null)
@@ -884,7 +1391,7 @@ describe('ScannerWorkbench mobile submit behavior', () => {
     await screen.findByText('Current check status')
 
     const activeCard = getActiveSessionCard()!
-    await user.click(within(activeCard).getByRole('button', { name: 'Open Sold Comps' }))
+    await user.click(within(activeCard).getByRole('button', { name: 'Open Active Listings' }))
 
     expect(within(activeCard).getByRole('status').textContent).toContain(
       'Allow pop-ups to open eBay in a new tab.'

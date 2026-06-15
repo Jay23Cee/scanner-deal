@@ -11,6 +11,8 @@ describe('eBay auth', () => {
     delete process.env.EBAY_ENV
     process.env.EBAY_CLIENT_ID = 'client-id'
     process.env.EBAY_CLIENT_SECRET = 'client-secret'
+    delete process.env.EBAY_SANDBOX_CLIENT_ID
+    delete process.env.EBAY_SANDBOX_CLIENT_SECRET
     process.env.EBAY_MARKETPLACE_ID = 'EBAY_US'
     resetTokenCache()
     vi.restoreAllMocks()
@@ -29,8 +31,8 @@ describe('eBay auth', () => {
 
   it('uses the sandbox OAuth URL when EBAY_ENV=sandbox', async () => {
     process.env.EBAY_ENV = 'sandbox'
-    process.env.EBAY_CLIENT_ID = 'JacksonC-ScannerD-SBX-app-id'
-    process.env.EBAY_CLIENT_SECRET = 'SBX-client-secret'
+    process.env.EBAY_SANDBOX_CLIENT_ID = 'JacksonC-ScannerD-SBX-app-id'
+    process.env.EBAY_SANDBOX_CLIENT_SECRET = 'SBX-client-secret'
 
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ access_token: 'token-123', expires_in: 7200 }), {
@@ -68,14 +70,24 @@ describe('eBay auth', () => {
 
   it('fails fast when production-looking credentials are configured for sandbox', async () => {
     process.env.EBAY_ENV = 'sandbox'
-    process.env.EBAY_CLIENT_ID = 'PRD-client-id'
-    process.env.EBAY_CLIENT_SECRET = 'PROD-client-secret'
+    process.env.EBAY_SANDBOX_CLIENT_ID = 'PRD-client-id'
+    process.env.EBAY_SANDBOX_CLIENT_SECRET = 'PROD-client-secret'
     const fetchMock = vi.fn()
 
     await expect(getAppAccessToken(fetchMock as typeof fetch)).rejects.toThrow(
       'EBAY_ENV is set to sandbox, but the configured eBay credentials look like Production keys.'
     )
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('surfaces missing sandbox environment variables clearly', async () => {
+    process.env.EBAY_ENV = 'sandbox'
+    delete process.env.EBAY_SANDBOX_CLIENT_ID
+    delete process.env.EBAY_SANDBOX_CLIENT_SECRET
+
+    await expect(getAppAccessToken(vi.fn() as typeof fetch)).rejects.toThrow(
+      'Missing required environment variable(s): EBAY_SANDBOX_CLIENT_ID, EBAY_SANDBOX_CLIENT_SECRET.'
+    )
   })
 
   it('surfaces missing environment variables clearly', async () => {

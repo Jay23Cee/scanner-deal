@@ -7,7 +7,8 @@ import { ReactNode } from 'react'
 const navItems = [
   { href: '/scanner', label: 'Scanner' },
   { href: '/orders', label: 'Orders' },
-  { href: '/history', label: 'History' },
+  { href: '/history', label: 'Searches' },
+  { href: '/analyses', label: 'Analyses' },
   { href: '/settings', label: 'Settings' }
 ]
 
@@ -17,7 +18,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="topbar__meta">Single-user local resale workflow</div>
+        <div className="topbar__meta">Single-user resale workflow</div>
         <div className="topbar__row">
           <div>
             <p className="eyebrow">eBay Resale Scanner</p>

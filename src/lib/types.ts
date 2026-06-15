@@ -12,6 +12,7 @@ export type ListingSortMode =
   | 'ending_soon'
 export type ResultsConditionFilter = 'any' | 'new' | 'used' | 'open_box' | 'for_parts'
 export type BuyingFormatFilter = 'any' | 'buy_it_now' | 'auction' | 'best_offer'
+export type SearchLogStatus = 'success' | 'error'
 
 export interface ItemLocationSummary {
   city: string | null
@@ -111,6 +112,35 @@ export interface SearchResponsePayload {
   fallbackReason?: string
 }
 
+export interface SearchLogSummary {
+  id: string
+  createdAt: Date
+  status: SearchLogStatus
+  mode: SearchMode
+  query: string
+  selectedCondition: ItemCondition
+  totalReturned: number | null
+  excludedCount: number | null
+  fallbackApplied: boolean
+  errorMessage: string | null
+}
+
+export interface SearchLogDetail extends SearchLogSummary {
+  resultsCondition: ResultsConditionFilter
+  buyingOptions: BuyingFormatFilter
+  minPrice: number | null
+  maxPrice: number | null
+  freeShipping: boolean
+  sort: ListingSortMode
+  limit: number
+  excludeWords: string
+  minMatchScore: number | null
+  listingAgeDays: number | null
+  marketplaceId: string | null
+  environment: EbayEnvironment | null
+  fallbackReason: string | null
+}
+
 export interface DealAnalysisPayload {
   scanId: string
   decision: Decision
@@ -153,6 +183,7 @@ export interface ScanSummary {
 }
 
 export interface ScanDetail extends ScanSummary {
+  soldSearchQuery: string | null
   sellerShippingCost: number
   feeRate: number
   packagingCost: number

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { prisma } from '../src/lib/db/client'
 import { resetTokenCache } from '../src/lib/ebay/auth'
 import {
   DEFAULT_IMAGE_SEARCH_FALLBACK_MESSAGE,
@@ -10,7 +11,7 @@ import {
 } from '../app/api/scanner/image-search/route'
 
 describe('POST /api/scanner/image-search', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.EBAY_ENV = 'production'
     process.env.EBAY_CLIENT_ID = 'example-PRD-client-id'
     process.env.EBAY_CLIENT_SECRET = 'example-PRD-client-secret'
@@ -18,6 +19,7 @@ describe('POST /api/scanner/image-search', () => {
     resetTokenCache()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    await prisma.searchLog.deleteMany()
   })
 
   it('rejects a missing image upload', async () => {
@@ -97,8 +99,8 @@ describe('POST /api/scanner/image-search', () => {
 
   it('rejects sandbox because eBay searchByImage is production-only', async () => {
     process.env.EBAY_ENV = 'sandbox'
-    process.env.EBAY_CLIENT_ID = 'example-SBX-client-id'
-    process.env.EBAY_CLIENT_SECRET = 'example-SBX-client-secret'
+    process.env.EBAY_SANDBOX_CLIENT_ID = 'example-SBX-client-id'
+    process.env.EBAY_SANDBOX_CLIENT_SECRET = 'example-SBX-client-secret'
 
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
@@ -186,6 +188,7 @@ describe('POST /api/scanner/image-search', () => {
     expect(payload.session.rawListings[0]).toMatchObject({
       itemId: '1'
     })
+    expect(await prisma.searchLog.count()).toBe(0)
 
     const imageSearchRequest = fetchMock.mock.calls.find((call) => {
       const url =

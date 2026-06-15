@@ -23,7 +23,10 @@ type ScannerSearchPanelProps = {
   imageSearch: PictureSearchState
   imageSearchFeatureState: ImageSearchFeatureState
   imageSearchUnavailableMessage: string | null
-  onImageFileSelected: (file: File | null) => void
+  onImageFilesSelected: (files: File[]) => void
+  onImageSearchActiveIndexChange: (index: number) => void
+  onFocusImageSession: (sessionId: string) => void
+  getImageSessionSoldQuery: (sessionId: string) => string | null
   onSearchStateChange: (nextState: Partial<SearchState>) => void
   onWorkflowModeChange: (nextMode: WorkflowMode) => void
 }
@@ -68,7 +71,10 @@ export function ScannerSearchPanel({
   imageSearch,
   imageSearchFeatureState,
   imageSearchUnavailableMessage,
-  onImageFileSelected,
+  onImageFilesSelected,
+  onImageSearchActiveIndexChange,
+  onFocusImageSession,
+  getImageSessionSoldQuery,
   onSearchStateChange,
   onWorkflowModeChange
 }: ScannerSearchPanelProps) {
@@ -164,7 +170,10 @@ export function ScannerSearchPanel({
         imageSearch={imageSearch}
         imageSearchFeatureState={imageSearchFeatureState}
         imageSearchUnavailableMessage={imageSearchUnavailableMessage}
-        onImageFileSelected={onImageFileSelected}
+        onImageFilesSelected={onImageFilesSelected}
+        onImageSearchActiveIndexChange={onImageSearchActiveIndexChange}
+        onFocusImageSession={onFocusImageSession}
+        getImageSessionSoldQuery={getImageSessionSoldQuery}
       />
 
       <BarcodeScanner

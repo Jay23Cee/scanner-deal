@@ -45,8 +45,8 @@ describe('GET /api/ebay/verify', () => {
 
   it('verifies sandbox keyword and gtin while reporting picture search as unavailable', async () => {
     process.env.EBAY_ENV = 'sandbox'
-    process.env.EBAY_CLIENT_ID = 'example-SBX-client-id'
-    process.env.EBAY_CLIENT_SECRET = 'example-SBX-client-secret'
+    process.env.EBAY_SANDBOX_CLIENT_ID = 'example-SBX-client-id'
+    process.env.EBAY_SANDBOX_CLIENT_SECRET = 'example-SBX-client-secret'
 
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ access_token: 'token-123', expires_in: 7200 }), {

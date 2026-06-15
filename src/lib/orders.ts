@@ -1,6 +1,10 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db/client'
-import { EbayApiError, getCurrentEbayEnvironment } from '@/lib/ebay/auth'
+import {
+  EbayApiError,
+  getCurrentEbayEnvironment,
+  getEbayCredentialEnvVarNames
+} from '@/lib/ebay/auth'
 import { exchangeSellerCodeForTokens, fetchSellerOrders, refreshSellerAccessToken, SellerTokenResponse } from '@/lib/ebay/seller-auth'
 import {
   DEFAULT_SELLER_ORDER_FULFILLMENT_FILTER,
@@ -126,9 +130,12 @@ export function normalizeSellerOrderSyncFilters(
 }
 
 function getMissingSellerConfiguration() {
+  const credentialEnvVars = getEbayCredentialEnvVarNames()
+
   return [
-    !process.env.EBAY_CLIENT_ID?.trim() && 'EBAY_CLIENT_ID',
-    !process.env.EBAY_CLIENT_SECRET?.trim() && 'EBAY_CLIENT_SECRET',
+    !process.env[credentialEnvVars.clientIdVarName]?.trim() && credentialEnvVars.clientIdVarName,
+    !process.env[credentialEnvVars.clientSecretVarName]?.trim() &&
+      credentialEnvVars.clientSecretVarName,
     !process.env.EBAY_RU_NAME?.trim() && 'EBAY_RU_NAME',
     !process.env.APP_SECRET?.trim() && 'APP_SECRET'
   ].filter(Boolean) as string[]

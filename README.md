@@ -1,6 +1,6 @@
 # eBay Resale Scanner
 
-Mobile-first Next.js app for two local eBay workflows:
+Mobile-first Next.js app for two eBay workflows:
 
 - comparing store items against active eBay listings to decide whether a deal is worth buying
 - viewing your own recent sold orders through eBay Fulfillment with seller consent
@@ -13,8 +13,9 @@ Mobile-first Next.js app for two local eBay workflows:
 - Open eBay sold/completed listings for manual review
 - Estimate resale range, profit, ROI, and confidence
 - Show a `BUY`, `MAYBE`, or `PASS` recommendation
-- Save local scan history with SQLite
-- Connect one seller account locally and cache recent sold orders
+- Save lightweight keyword/GTIN search history
+- Save full deal analyses with comparison snapshots
+- Connect one seller account and cache recent sold orders
 - Review cached order detail with line items
 
 ## What This App Does Not Do
@@ -62,6 +63,104 @@ These eBay concepts are different and this app keeps them separate:
 - eBay documents that Marketplace Insights is restricted and not open to new users
 - This app does not claim market-wide sold-comp access
 
+## Workflow Diagram
+
+This flowchart shows how the app keeps active listing search, manual sold/completed review, and seller-owned orders separate while still storing results inside one app.
+
+```mermaid
+flowchart LR
+  classDef lane fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
+  classDef app fill:#ecfdf5,stroke:#16a34a,color:#14532d;
+  classDef ebay fill:#eff6ff,stroke:#2563eb,color:#1e3a8a;
+  classDef store fill:#ecfeff,stroke:#0891b2,color:#164e63;
+  classDef note fill:#fff7ed,stroke:#f97316,color:#7c2d12;
+
+  subgraph USER["User"]
+    direction TB
+    U0[Open app]
+    U1[Choose scanner or orders workflow]
+    U2[Review sold comps manually on eBay]
+    U3[Return to app and enter manual sold comps plus pricing assumptions]
+    U4[Review BUY / MAYBE / PASS]
+    U5[Approve seller consent]
+    U6[Filter cached orders and open order detail]
+  end
+
+  subgraph UI["App UI"]
+    direction TB
+    S0["/scanner"]
+    S1[Choose keyword / GTIN / optional picture search]
+    S2[Run search]
+    S3[Show active listings in scanner session]
+    S4[Edit sold search title]
+    S5[Open sold/completed results on eBay in new tab]
+    S6[Submit selected active listings plus manual sold comps plus pricing assumptions]
+    S7[Show BUY / MAYBE / PASS]
+    H0["/history"]
+    A0["/analyses"]
+    O0["/orders"]
+    O1[Connect seller account]
+    O2[Refresh orders]
+    O3[Show cached orders]
+    OD0["/orders/[orderId]"]
+  end
+
+  subgraph BACKEND["App Backend"]
+    direction TB
+    B1[POST /api/ebay/search]
+    B2[Normalize + filter active listings]
+    B3[Save search log]
+    B4[POST /api/deal/analyze]
+    B5[Calculate profit / ROI / confidence]
+    B6[Save analysis snapshot]
+    B7[eBay OAuth connect + callback]
+    B8[POST /api/orders/sync]
+    B9[Cache seller orders in database]
+  end
+
+  subgraph EXT["eBay + Database"]
+    direction TB
+    E1[Browse API]
+    E2[Manual browser handoff]
+    E3[No sold-price scraping]
+    E4[eBay sold/completed search results]
+    E5[Search log]
+    E6[Analysis snapshot]
+    E7[eBay OAuth consent]
+    E8[Sell Fulfillment getOrders]
+    E9[Cached seller orders]
+    N0[This app does not provide public sold comps through an API]
+    N1[Seller orders only apply to the connected seller account with consent]
+    N2[Picture search is optional and feeds the same scanner session]
+  end
+
+  U0 --> U1
+  U1 --> S0
+  U1 --> O0
+
+  S0 --> S1 --> S2 --> B1 --> E1 --> B2 --> B3 --> E5 --> H0
+  B2 --> S3
+  S1 -.-> N2
+  N2 -.-> S3
+  S3 --> S4 --> S5 --> E2 --> E4 --> U2
+  E2 -.-> E3
+  E4 -.-> N0
+  S3 --> S6
+  U2 --> U3 --> S6 --> B4 --> B5 --> B6 --> E6 --> A0
+  B5 --> S7 --> U4
+
+  O0 --> O1 --> B7 --> E7 --> U5 --> B7
+  B7 --> O2 --> B8 --> E8 --> B9 --> E9 --> O3 --> U6 --> OD0
+  E8 -.-> N1
+
+  class U0,U1,U2,U3,U4,U5,U6 lane;
+  class S0,S1,S2,S3,S4,S5,S6,S7,H0,A0,O0,O1,O2,O3,OD0 app;
+  class B1,B2,B3,B4,B5,B6,B7,B8,B9 app;
+  class E1,E2,E3,E4,E7,E8 ebay;
+  class E5,E6,E9 store;
+  class N0,N1,N2 note;
+```
+
 ## Production Access Warning
 
 Local development can proceed with valid eBay credentials, but eBay documents that production Buy API access may require approval through the eBay production access process. Build and test locally first, and treat hosted production deployment as dependent on valid production approval. Use `production` when you need real active listings. Use `sandbox` only for developer-side endpoint testing.
@@ -70,7 +169,7 @@ Local development can proceed with valid eBay credentials, but eBay documents th
 
 - Next.js App Router
 - TypeScript
-- Prisma + SQLite
+- Prisma + SQLite locally, Turso when hosted
 - Node runtime API routes
 - Optional Python CLI under `tools/ebay-cli/` for developer testing only
 
@@ -92,9 +191,13 @@ Copy-Item .env.local.example .env.local
 
 ```dotenv
 DATABASE_URL="file:./dev.db"
+TURSO_DATABASE_URL=
+TURSO_AUTH_TOKEN=
 EBAY_ENV=production
 EBAY_CLIENT_ID=
 EBAY_CLIENT_SECRET=
+EBAY_SANDBOX_CLIENT_ID=
+EBAY_SANDBOX_CLIENT_SECRET=
 EBAY_MARKETPLACE_ID=EBAY_US
 EBAY_RU_NAME=
 APP_SECRET=
@@ -103,17 +206,22 @@ APP_SECRET=
 For real active listings, use your Production App ID and Production Cert ID with
 `EBAY_ENV=production`.
 
-For sandbox-only testing, set `EBAY_ENV=sandbox` and use the Sandbox App ID and
-Sandbox Cert ID from the same eBay Application Keys page.
+For sandbox-only testing, set `EBAY_ENV=sandbox` and fill
+`EBAY_SANDBOX_CLIENT_ID` and `EBAY_SANDBOX_CLIENT_SECRET` with the Sandbox App ID
+and Sandbox Cert ID from the same eBay Application Keys page.
 
 If `EBAY_ENV` is omitted, the app defaults to `production`.
+
+The app requests OAuth application tokens with the client-credentials flow,
+caches the token in memory until it is near expiration, and refreshes it
+automatically. No manually pasted app token is required.
 
 To use `/orders`, also configure:
 
 - `EBAY_RU_NAME`
   The eBay RuName for the active environment. It must match the redirect configuration in the eBay developer portal.
 - `APP_SECRET`
-  Local secret used to encrypt persisted seller access and refresh tokens in SQLite.
+  Secret used to encrypt persisted seller access and refresh tokens in the app database.
 
 Picture search is optional. To enable the photo-to-search flow on `/scanner`, configure:
 
@@ -126,18 +234,29 @@ Picture search is optional. To enable the photo-to-search flow on `/scanner`, co
 - `EBAY_ENV=production`
   Required for picture search. eBay `searchByImage` is not available in Sandbox.
 
+On mobile, the scanner shows separate `Take Photo` and `Choose Photo` actions. `Take Photo`
+uses the camera hint, while `Choose Photo` uses the normal file picker and can select multiple
+saved images in one batch.
+Browsers and devices can still vary in how they present gallery choices.
+
 For local development, point the eBay redirect configuration for that RuName at:
 
 ```text
 http://localhost:3000/api/ebay/sell/callback
 ```
 
-4. Generate the Prisma client and create the local database.
+4. Generate the Prisma client and create or update the local SQLite database.
 
 ```powershell
 npm run prisma:generate
-npm run db:push
+npm run db:migrate
 ```
+
+For hosted Vercel deployments backed by Turso:
+
+- Keep `DATABASE_URL="file:./dev.db"` for local Prisma migrations.
+- Set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` in Vercel for runtime database access.
+- Generate migration SQL locally, then apply it to Turso with the Turso CLI.
 
 5. Start the app.
 
@@ -172,7 +291,9 @@ http://localhost:3000/scanner
 - `/orders`
   Connect a seller account, sync recent sold orders, and inspect cached order detail
 - `/history`
-  View the latest saved analyses
+  View the latest saved keyword and GTIN searches
+- `/analyses`
+  View the latest saved deal analyses
 - `/settings`
   Save local default assumptions such as fee rate and shipping estimate
 
@@ -188,7 +309,7 @@ http://localhost:3000/scanner
 8. Return to the app, enter store price and selling assumptions
 9. Run analysis
 10. Review `BUY`, `MAYBE`, or `PASS`
-11. Check `/history` later
+11. Check `/history` later for saved searches or `/analyses` for completed deal checks
 
 ## Seller Orders Flow
 
@@ -201,7 +322,7 @@ http://localhost:3000/scanner
 
 ## Seller Orders Notes
 
-- Orders are cached locally in SQLite after each sync.
+- Orders are cached in the app database after each sync.
 - The app supports one connected seller account at a time.
 - Cached seller tokens are encrypted with `APP_SECRET`.
 - eBay does not return archived orders from `getOrders`.
@@ -240,8 +361,8 @@ The original Python prototype now lives under `tools/ebay-cli/` and is only for 
 
 ## Troubleshooting eBay Auth
 
-- `EBAY_ENV=production` must be paired with Production App ID and Cert ID values.
-- `EBAY_ENV=sandbox` must be paired with Sandbox App ID and Cert ID values.
+- `EBAY_ENV=production` must be paired with `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET`.
+- `EBAY_ENV=sandbox` must be paired with `EBAY_SANDBOX_CLIENT_ID` and `EBAY_SANDBOX_CLIENT_SECRET`.
 - `EBAY_RU_NAME` must belong to the same eBay environment as `EBAY_ENV`.
 - The RuName's redirect target must point to `/api/ebay/sell/callback` for the app instance you are running.
 - `APP_SECRET` must be set before seller tokens can be saved locally.
@@ -256,7 +377,9 @@ The original Python prototype now lives under `tools/ebay-cli/` and is only for 
 ## Troubleshooting Picture Search
 
 - Picture search stays available only when `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, and `EBAY_MARKETPLACE_ID` are configured in `.env.local`.
+- Sandbox credentials do not enable picture search. eBay `searchByImage` remains production-only.
 - Picture search also requires `EBAY_ENV=production` because eBay `searchByImage` is not available in Sandbox.
+- `Choose Photo` removes the camera hint, supports selecting multiple saved images, and still depends on the mobile browser and device for the exact picker UI.
 - If the required eBay config is missing or the app is running in Sandbox, `/scanner` keeps the panel visible but disables uploads and falls back to keyword or GTIN search.
 - Open `/api/ebay/verify` locally to confirm the current environment, token status, and whether picture search is expected to be available.
 
@@ -267,7 +390,7 @@ npm run dev
 npm run build
 npm run test
 npm run typecheck
-npm run db:push
+npm run db:migrate
 ```
 
 ## Official References

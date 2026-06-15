@@ -45,6 +45,7 @@ type ScannerSessionCardProps = {
   onRawListingsActiveIndexChange: (sessionId: string, value: number) => void
   onSelectedListingsActiveIndexChange: (sessionId: string, value: number) => void
   onSoldSearchQueryChange: (sessionId: string, value: string) => void
+  onManualSoldCompChange: (sessionId: string, compIndex: number, patch: Partial<SearchSession['manualSoldComps'][number]>) => void
   onRunAnalysis: (sessionId: string) => void
 }
 
@@ -162,6 +163,7 @@ export function ScannerSessionCard({
   onRawListingsActiveIndexChange,
   onSelectedListingsActiveIndexChange,
   onSoldSearchQueryChange,
+  onManualSoldCompChange,
   onRunAnalysis
 }: ScannerSessionCardProps) {
   const sortedRawListings = sortListings(session.rawListings, session.appliedFilters.sort)
@@ -671,17 +673,130 @@ export function ScannerSessionCard({
                     onChange={(event) => onStorePriceChange(session.id, Number(event.target.value))}
                   />
                 </label>
+              </div>
 
-                <div className="actions">
-                  <button
-                    type="button"
-                    className="button button--accent"
-                    onClick={() => onRunAnalysis(session.id)}
-                    disabled={session.analyzing || session.selectedComparisonListings.length === 0}
-                  >
-                    {session.analyzing ? 'Analyzing...' : 'Analyze deal'}
-                  </button>
+              <section className="panel panel--subtle">
+                <div className="panel__split">
+                  <div>
+                    <p className="eyebrow">Sold comps reviewed on eBay</p>
+                    <h3>Manual sold-comp notes</h3>
+                    <p className="panel__lede">
+                      Save up to three manual sold comps with this analysis. Blank rows are ignored.
+                    </p>
+                  </div>
+                  <div className="status-chip">{session.manualSoldComps.length} rows</div>
                 </div>
+
+                <div className="stack">
+                  {session.manualSoldComps.map((comp, index) => (
+                    <section key={comp.id} className="panel panel--subtle">
+                      <div className="panel__split">
+                        <div>
+                          <p className="eyebrow">Comp {index + 1}</p>
+                          <h3>{comp.title.trim() || 'Manual sold comp'}</h3>
+                        </div>
+                      </div>
+
+                      <div className="form-grid">
+                        <label className="form-grid__wide">
+                          {`Comp ${index + 1} title`}
+                          <input
+                            type="text"
+                            value={comp.title}
+                            onChange={(event) =>
+                              onManualSoldCompChange(session.id, index, {
+                                title: event.target.value
+                              })
+                            }
+                            placeholder="Sold listing title"
+                          />
+                        </label>
+
+                        <label>
+                          {`Comp ${index + 1} sold price`}
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={comp.soldPrice ?? ''}
+                            onChange={(event) =>
+                              onManualSoldCompChange(session.id, index, {
+                                soldPrice: parseOptionalNumber(event.target.value)
+                              })
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          {`Comp ${index + 1} shipping`}
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={comp.shippingCost ?? ''}
+                            onChange={(event) =>
+                              onManualSoldCompChange(session.id, index, {
+                                shippingCost: parseOptionalNumber(event.target.value)
+                              })
+                            }
+                          />
+                        </label>
+
+                        <label>
+                          {`Comp ${index + 1} condition`}
+                          <input
+                            type="text"
+                            value={comp.condition}
+                            onChange={(event) =>
+                              onManualSoldCompChange(session.id, index, {
+                                condition: event.target.value
+                              })
+                            }
+                            placeholder="Used"
+                          />
+                        </label>
+
+                        <label>
+                          {`Comp ${index + 1} sold date`}
+                          <input
+                            type="date"
+                            value={comp.soldDate ?? ''}
+                            onChange={(event) =>
+                              onManualSoldCompChange(session.id, index, {
+                                soldDate: event.target.value || null
+                              })
+                            }
+                          />
+                        </label>
+
+                        <label className="form-grid__wide">
+                          {`Comp ${index + 1} notes`}
+                          <textarea
+                            value={comp.notes}
+                            onChange={(event) =>
+                              onManualSoldCompChange(session.id, index, {
+                                notes: event.target.value
+                              })
+                            }
+                            rows={3}
+                            placeholder="Why this sold comp matters"
+                          />
+                        </label>
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </section>
+
+              <div className="actions">
+                <button
+                  type="button"
+                  className="button button--accent"
+                  onClick={() => onRunAnalysis(session.id)}
+                  disabled={session.analyzing || session.selectedComparisonListings.length === 0}
+                >
+                  {session.analyzing ? 'Analyzing...' : 'Analyze deal'}
+                </button>
               </div>
 
               <div className="quick-metrics">

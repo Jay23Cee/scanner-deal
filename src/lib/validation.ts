@@ -91,6 +91,7 @@ export const searchRequestSchema = z.object({
 })
 
 export const analyzeRequestSchema = searchRequestSchema.extend({
+  soldSearchQuery: z.string().trim().min(1).max(100),
   storePrice: z.number().min(0),
   sellerShippingCost: z.number().min(0),
   feeRate: z.number().min(0).max(1),

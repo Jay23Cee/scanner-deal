@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
-import { getRecentScans } from '@/lib/history'
+import { getRecentSearchLogs } from '@/lib/history'
 
 export const runtime = 'nodejs'
 
 export async function GET() {
   try {
-    const scans = await getRecentScans()
-    return NextResponse.json({ scans })
+    const searches = await getRecentSearchLogs()
+    return NextResponse.json({ searches })
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'History failed.' }, { status: 500 })
   }

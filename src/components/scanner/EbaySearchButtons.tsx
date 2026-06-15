@@ -3,16 +3,21 @@
 import { useEffect, useState, type ComponentPropsWithoutRef } from 'react'
 import {
   buildEbayActiveSearchUrl,
-  buildEbaySoldCompsUrl,
+  buildSoldCompsHandoffPath,
   cleanEbayQuery,
   openEbayUrl
 } from '@/lib/ebayLinks'
 
-type EbaySearchButtonProps = {
+type PopupSearchButtonProps = {
   query: string
 } & Omit<ComponentPropsWithoutRef<'button'>, 'type'>
 
-type BaseSearchButtonProps = EbaySearchButtonProps & {
+type SoldCompsButtonProps = {
+  query: string
+  disabled?: boolean
+} & Omit<ComponentPropsWithoutRef<'a'>, 'href' | 'target' | 'rel'>
+
+type BaseSearchButtonProps = PopupSearchButtonProps & {
   buildUrl: (query: string) => string
 }
 
@@ -63,11 +68,34 @@ function BaseSearchButton({
   )
 }
 
-export function SoldCompsButton({ children = 'Open Sold Comps', ...rest }: EbaySearchButtonProps) {
+export function SoldCompsButton({
+  query,
+  children = 'Open Sold Comps',
+  className = 'button',
+  disabled,
+  ...rest
+}: SoldCompsButtonProps) {
+  const cleanQuery = cleanEbayQuery(query)
+  const isDisabled = disabled || cleanQuery.length === 0
+
   return (
-    <BaseSearchButton {...rest} buildUrl={buildEbaySoldCompsUrl}>
-      {children}
-    </BaseSearchButton>
+    <div className="ebay-search-button">
+      {isDisabled ? (
+        <button type="button" className={className} disabled>
+          {children}
+        </button>
+      ) : (
+        <a
+          {...rest}
+          href={buildSoldCompsHandoffPath(cleanQuery)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={className}
+        >
+          {children}
+        </a>
+      )}
+    </div>
   )
 }
 
@@ -75,7 +103,7 @@ export function ActiveListingsButton({
   children = 'Open Active Listings',
   className = 'button button--ghost',
   ...rest
-}: EbaySearchButtonProps) {
+}: PopupSearchButtonProps) {
   return (
     <BaseSearchButton {...rest} className={className} buildUrl={buildEbayActiveSearchUrl}>
       {children}

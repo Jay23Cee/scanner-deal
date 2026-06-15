@@ -169,7 +169,7 @@ export function OrdersWorkspace({
             <p className="eyebrow">Seller orders</p>
             <h2>Review your recent sold orders without leaving the app.</h2>
             <p className="panel__lede">
-              This workflow uses eBay Fulfillment with seller consent. Orders are cached locally in SQLite and refreshed on demand.
+              This workflow uses eBay Fulfillment with seller consent. Orders are cached in the app database and refreshed on demand.
             </p>
           </div>
           <div className="status-chip">{orders.length} cached orders</div>

@@ -9,7 +9,7 @@ import {
 } from '@/lib/types'
 import { createDefaultManualSoldComps } from '@/lib/manual-sold-comps'
 import { deriveEbaySoldSearchQuery } from '@/lib/ebay/sold'
-import { buildEbayActiveSearchUrl, buildEbaySoldCompsUrl } from '@/lib/ebayLinks'
+import { buildEbayActiveSearchUrl, buildSoldCompsHandoffPath } from '@/lib/ebayLinks'
 import { createDefaultSearchFilters } from '@/lib/search-filters'
 
 export type SearchState = {
@@ -20,7 +20,8 @@ export type SearchState = {
 
 export type WorkflowMode = 'quick_check' | 'full_analysis' | 'board_view'
 export type SearchSessionSource = 'keyword' | 'gtin' | 'image'
-export type PictureSearchStatus = 'idle' | 'uploading' | 'ready' | 'error'
+export type PictureSearchStatus = 'idle' | 'processing' | 'complete'
+export type PictureSearchItemStatus = 'queued' | 'uploading' | 'ready' | 'no_match' | 'error'
 
 export type SearchRequestResult = {
   ok: boolean
@@ -42,11 +43,19 @@ export type SessionPanelState = {
 
 export type PictureSearchState = {
   status: PictureSearchStatus
+  items: PictureSearchItem[]
+  activeIndex: number
+}
+
+export type PictureSearchItem = {
+  id: string
   previewUrl: string | null
-  previewName: string | null
+  previewName: string
+  status: PictureSearchItemStatus
   detectedTitle: string
   fallbackMessage: string | null
   error: string | null
+  sessionId: string | null
 }
 
 export type SearchSession = {
@@ -122,7 +131,7 @@ export function createDefaultSessionPanelState(
 
 export function buildSessionEbayLinks(query: string) {
   return {
-    soldCompsUrl: buildEbaySoldCompsUrl(query),
+    soldCompsUrl: buildSoldCompsHandoffPath(query),
     activeSearchUrl: buildEbayActiveSearchUrl(query)
   }
 }
@@ -130,11 +139,8 @@ export function buildSessionEbayLinks(query: string) {
 export function createDefaultPictureSearchState(): PictureSearchState {
   return {
     status: 'idle',
-    previewUrl: null,
-    previewName: null,
-    detectedTitle: '',
-    fallbackMessage: null,
-    error: null
+    items: [],
+    activeIndex: 0
   }
 }
 

@@ -12,6 +12,7 @@ model ScanRecord {
   createdAt            DateTime          @default(now())
   mode                 String
   query                String
+  soldSearchQuery      String?
   selectedCondition    String
   storePrice           Float
   sellerShippingCost   Float
@@ -33,6 +34,36 @@ model ScanRecord {
   excludedCount        Int
   listings             ListingSnapshot[]
   manualSoldComps      ManualSoldCompSnapshot[]
+}
+
+model SearchLog {
+  id                String   @id @default(cuid())
+  createdAt         DateTime @default(now())
+  status            String
+  mode              String
+  query             String
+  selectedCondition String
+  resultsCondition  String
+  buyingOptions     String
+  minPrice          Float?
+  maxPrice          Float?
+  freeShipping      Boolean  @default(false)
+  sort              String
+  limit             Int
+  excludeWords      String
+  minMatchScore     Float?
+  listingAgeDays    Int?
+  marketplaceId     String?
+  environment       String?
+  totalReturned     Int?
+  excludedCount     Int?
+  fallbackApplied   Boolean  @default(false)
+  fallbackReason    String?
+  errorMessage      String?
+
+  @@index([createdAt])
+  @@index([query])
+  @@index([mode])
 }
 
 model ListingSnapshot {

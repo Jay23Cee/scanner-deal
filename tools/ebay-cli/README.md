@@ -15,7 +15,9 @@ pip install -r requirements.txt
 The CLI reads credentials from the root `.env.local`.
 
 Use `EBAY_ENV=production` for real active listings. Set `EBAY_ENV=sandbox` only when
-you intentionally want to hit eBay's sandbox OAuth and Browse hosts.
+you intentionally want to hit eBay's sandbox OAuth and Browse hosts. Production uses
+`EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET`; sandbox uses
+`EBAY_SANDBOX_CLIENT_ID` and `EBAY_SANDBOX_CLIENT_SECRET`.
 
 ## Commands
 

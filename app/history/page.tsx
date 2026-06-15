@@ -1,71 +1,80 @@
 import Link from 'next/link'
-import { DecisionBadge } from '@/components/results/DecisionBadge'
-import { getRecentScans } from '@/lib/history'
+import { buildSoldCompsHandoffPath } from '@/lib/ebayLinks'
+import { getRecentSearchLogs } from '@/lib/history'
 
-const money = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  maximumFractionDigits: 2
-})
+function formatStatus(status: 'success' | 'error') {
+  return status === 'error' ? 'Error' : 'Saved'
+}
 
 export default async function HistoryPage() {
-  const scans = await getRecentScans()
+  const searches = await getRecentSearchLogs()
 
   return (
     <div className="stack stack--xl">
       <section className="panel">
-        <p className="eyebrow">Saved history</p>
-        <h2>Recent deal checks</h2>
+        <p className="eyebrow">Search history</p>
+        <h2>Recent keyword and GTIN searches</h2>
         <p className="panel__lede">
-          Stored locally with SQLite. The newest 50 analyses show up here.
+          Each search stores summary-only metadata with no images and no saved listing payloads.
         </p>
       </section>
 
-      {scans.length === 0 ? (
+      {searches.length === 0 ? (
         <section className="empty-state">
-          <h3>No saved scans yet</h3>
-          <p>Analyze a deal from the scanner page and it will show up here.</p>
+          <h3>No saved searches yet</h3>
+          <p>Run a keyword or GTIN search from the scanner page and it will show up here.</p>
         </section>
       ) : (
         <div className="history-grid">
-          {scans.map((scan) => (
-            <article key={scan.id} className="history-card panel">
+          {searches.map((search) => (
+            <article key={search.id} className="history-card panel">
               <div className="history-card__meta">
                 <div>
-                  <p className="eyebrow">{scan.mode.toUpperCase()}</p>
-                  <h3>{scan.query}</h3>
-                  <p>{new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(scan.createdAt)}</p>
+                  <p className="eyebrow">{search.mode.toUpperCase()}</p>
+                  <h3>{search.query}</h3>
+                  <p>
+                    {new Intl.DateTimeFormat('en-US', {
+                      dateStyle: 'medium',
+                      timeStyle: 'short'
+                    }).format(search.createdAt)}
+                  </p>
                 </div>
-                <DecisionBadge decision={scan.decision as 'BUY' | 'MAYBE' | 'PASS'} />
+                <div className="status-chip">{formatStatus(search.status)}</div>
               </div>
 
               <div className="history-card__metrics">
                 <span>
-                  <small>Store price</small>
-                  <strong>{money.format(scan.storePrice)}</strong>
+                  <small>Condition</small>
+                  <strong>{search.selectedCondition.replace('_', ' ')}</strong>
                 </span>
                 <span>
-                  <small>Profit</small>
-                  <strong>{money.format(scan.estimatedProfit)}</strong>
+                  <small>Results</small>
+                  <strong>{search.totalReturned ?? 0}</strong>
                 </span>
                 <span>
-                  <small>ROI</small>
-                  <strong>{(scan.roi * 100).toFixed(1)}%</strong>
+                  <small>Excluded</small>
+                  <strong>{search.excludedCount ?? 0}</strong>
                 </span>
                 <span>
-                  <small>Confidence</small>
-                  <strong>{scan.confidence}</strong>
-                </span>
-                <span>
-                  <small>Range</small>
-                  <strong>
-                    {money.format(scan.estimatedLowPrice)} - {money.format(scan.estimatedHighPrice)}
-                  </strong>
+                  <small>Fallback</small>
+                  <strong>{search.fallbackApplied ? 'Yes' : 'No'}</strong>
                 </span>
               </div>
 
-              <p>{scan.reason}</p>
-              <Link href={`/history/${scan.id}`}>Open saved search</Link>
+              <p>{search.errorMessage ?? 'Search summary saved successfully.'}</p>
+              <div className="actions">
+                <a
+                  href={buildSoldCompsHandoffPath(search.query)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="button"
+                >
+                  Open Sold Comps
+                </a>
+                <Link href={`/history/${search.id}`} className="button button--ghost">
+                  Open saved search
+                </Link>
+              </div>
             </article>
           ))}
         </div>

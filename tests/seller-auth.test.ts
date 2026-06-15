@@ -10,8 +10,8 @@ import { decryptString, encryptString } from '@/lib/security'
 describe('seller auth helpers', () => {
   beforeEach(() => {
     process.env.EBAY_ENV = 'sandbox'
-    process.env.EBAY_CLIENT_ID = 'JacksonC-ScannerD-SBX-app-id'
-    process.env.EBAY_CLIENT_SECRET = 'SBX-client-secret'
+    process.env.EBAY_SANDBOX_CLIENT_ID = 'JacksonC-ScannerD-SBX-app-id'
+    process.env.EBAY_SANDBOX_CLIENT_SECRET = 'SBX-client-secret'
     process.env.EBAY_RU_NAME = 'scanner-runame'
     process.env.APP_SECRET = 'test-app-secret'
   })

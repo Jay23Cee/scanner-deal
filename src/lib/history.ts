@@ -1,103 +1,126 @@
 import { prisma } from '@/lib/db/client'
-import { ListingResult, ManualSoldComp, ScanDetail, ScanSummary } from '@/lib/types'
+import {
+  SearchLogDetail,
+  SearchLogStatus,
+  SearchLogSummary,
+  SearchRequestPayload,
+  SearchResponsePayload
+} from '@/lib/types'
 
-function parseStringArray(value: unknown) {
-  if (!Array.isArray(value)) {
-    return []
-  }
-
-  return value.filter((entry): entry is string => typeof entry === 'string')
+type SearchLogRecord = {
+  id: string
+  createdAt: Date
+  status: string
+  mode: string
+  query: string
+  selectedCondition: string
+  resultsCondition: string
+  buyingOptions: string
+  minPrice: number | null
+  maxPrice: number | null
+  freeShipping: boolean
+  sort: string
+  limit: number
+  excludeWords: string
+  minMatchScore: number | null
+  listingAgeDays: number | null
+  marketplaceId: string | null
+  environment: string | null
+  totalReturned: number | null
+  excludedCount: number | null
+  fallbackApplied: boolean
+  fallbackReason: string | null
+  errorMessage: string | null
 }
 
-function mapStoredListing(listing: {
-  title: string
-  price: number
-  currency: string
-  shippingCost: number
-  shippingKnown: boolean
-  totalPrice: number
-  conditionLabel: string
-  conditionId: string | null
-  sellerUsername: string | null
-  sellerFeedbackPercentage: number | null
-  itemLocation: unknown
-  itemUrl: string
-  itemId: string
-  matchScore: number
-  primaryImageUrl: string | null
-  thumbnailUrl: string | null
-  additionalImageUrls: unknown
-  itemCreationDate: string | null
-  itemOriginDate: string | null
-  itemEndDate: string | null
-  buyingOptions: unknown
-}): ListingResult {
+function mapStatus(status: string): SearchLogStatus {
+  return status === 'error' ? 'error' : 'success'
+}
+
+function mapSearchLogSummary(searchLog: Pick<
+  SearchLogRecord,
+  | 'id'
+  | 'createdAt'
+  | 'status'
+  | 'mode'
+  | 'query'
+  | 'selectedCondition'
+  | 'totalReturned'
+  | 'excludedCount'
+  | 'fallbackApplied'
+  | 'errorMessage'
+>): SearchLogSummary {
   return {
-    title: listing.title,
-    price: listing.price,
-    currency: listing.currency,
-    shippingCost: listing.shippingCost,
-    shippingKnown: listing.shippingKnown,
-    totalPrice: listing.totalPrice,
-    condition: listing.conditionLabel,
-    conditionId: listing.conditionId,
-    sellerUsername: listing.sellerUsername,
-    sellerFeedbackPercentage: listing.sellerFeedbackPercentage,
-    itemLocation:
-      listing.itemLocation && typeof listing.itemLocation === 'object'
-        ? {
-            city:
-              'city' in listing.itemLocation && typeof listing.itemLocation.city === 'string'
-                ? listing.itemLocation.city
-                : null,
-            stateOrProvince:
-              'stateOrProvince' in listing.itemLocation &&
-              typeof listing.itemLocation.stateOrProvince === 'string'
-                ? listing.itemLocation.stateOrProvince
-                : null,
-            country:
-              'country' in listing.itemLocation && typeof listing.itemLocation.country === 'string'
-                ? listing.itemLocation.country
-                : null,
-            postalCode:
-              'postalCode' in listing.itemLocation && typeof listing.itemLocation.postalCode === 'string'
-                ? listing.itemLocation.postalCode
-                : null
-          }
-        : null,
-    itemUrl: listing.itemUrl,
-    itemId: listing.itemId,
-    matchScore: listing.matchScore,
-    primaryImageUrl: listing.primaryImageUrl,
-    thumbnailUrl: listing.thumbnailUrl,
-    additionalImageUrls: parseStringArray(listing.additionalImageUrls),
-    itemCreationDate: listing.itemCreationDate,
-    itemOriginDate: listing.itemOriginDate,
-    itemEndDate: listing.itemEndDate,
-    buyingOptions: parseStringArray(listing.buyingOptions)
+    id: searchLog.id,
+    createdAt: searchLog.createdAt,
+    status: mapStatus(searchLog.status),
+    mode: searchLog.mode as SearchLogSummary['mode'],
+    query: searchLog.query,
+    selectedCondition: searchLog.selectedCondition as SearchLogSummary['selectedCondition'],
+    totalReturned: searchLog.totalReturned,
+    excludedCount: searchLog.excludedCount,
+    fallbackApplied: searchLog.fallbackApplied,
+    errorMessage: searchLog.errorMessage
   }
 }
 
-function mapStoredManualSoldComp(comp: {
-  title: string
-  soldPrice: number | null
-  shippingCost: number | null
-  conditionLabel: string
-  soldDate: string | null
-  notes: string
-}): ManualSoldComp {
+function mapSearchLogDetail(searchLog: SearchLogRecord): SearchLogDetail {
   return {
-    title: comp.title,
-    soldPrice: comp.soldPrice,
-    shippingCost: comp.shippingCost,
-    condition: comp.conditionLabel,
-    soldDate: comp.soldDate,
-    notes: comp.notes
+    ...mapSearchLogSummary(searchLog),
+    resultsCondition: searchLog.resultsCondition as SearchLogDetail['resultsCondition'],
+    buyingOptions: searchLog.buyingOptions as SearchLogDetail['buyingOptions'],
+    minPrice: searchLog.minPrice,
+    maxPrice: searchLog.maxPrice,
+    freeShipping: searchLog.freeShipping,
+    sort: searchLog.sort as SearchLogDetail['sort'],
+    limit: searchLog.limit,
+    excludeWords: searchLog.excludeWords,
+    minMatchScore: searchLog.minMatchScore,
+    listingAgeDays: searchLog.listingAgeDays,
+    marketplaceId: searchLog.marketplaceId,
+    environment: searchLog.environment as SearchLogDetail['environment'],
+    fallbackReason: searchLog.fallbackReason
   }
 }
 
-export async function getRecentScans(limit = 50): Promise<ScanSummary[]> {
-  return prisma.scanRecord.findMany({
+export async function createSearchLog(input: {
+  request: SearchRequestPayload
+  status: SearchLogStatus
+  response?: SearchResponsePayload
+  errorMessage?: string
+}) {
+  const request = input.request
+  const response = input.response
+
+  return prisma.searchLog.create({
+    data: {
+      status: input.status,
+      mode: request.mode,
+      query: request.query.trim(),
+      selectedCondition: request.condition,
+      resultsCondition: request.resultsCondition,
+      buyingOptions: request.buyingOptions,
+      minPrice: request.minPrice,
+      maxPrice: request.maxPrice,
+      freeShipping: request.freeShipping,
+      sort: request.sort,
+      limit: request.limit,
+      excludeWords: request.excludeWords,
+      minMatchScore: request.minMatchScore,
+      listingAgeDays: request.listingAgeDays,
+      marketplaceId: response?.marketplaceId ?? null,
+      environment: response?.environment ?? null,
+      totalReturned: response?.totalReturned ?? null,
+      excludedCount: response?.excludedCount ?? null,
+      fallbackApplied: response?.fallbackApplied ?? false,
+      fallbackReason: response?.fallbackReason ?? null,
+      errorMessage: input.errorMessage ?? null
+    }
+  })
+}
+
+export async function getRecentSearchLogs(limit = 50): Promise<SearchLogSummary[]> {
+  const searchLogs = await prisma.searchLog.findMany({
     orderBy: {
       createdAt: 'desc'
     },
@@ -105,125 +128,55 @@ export async function getRecentScans(limit = 50): Promise<ScanSummary[]> {
     select: {
       id: true,
       createdAt: true,
-      query: true,
+      status: true,
       mode: true,
+      query: true,
       selectedCondition: true,
-      storePrice: true,
-      estimatedProfit: true,
-      roi: true,
-      confidence: true,
-      decision: true,
-      reason: true,
-      listingCount: true,
-      estimatedLowPrice: true,
-      estimatedMedianPrice: true,
-      estimatedHighPrice: true
+      totalReturned: true,
+      excludedCount: true,
+      fallbackApplied: true,
+      errorMessage: true
     }
-  }) as Promise<ScanSummary[]>
+  })
+
+  return searchLogs.map(mapSearchLogSummary)
 }
 
-export async function getScanById(scanId: string): Promise<ScanDetail | null> {
-  const scan = await prisma.scanRecord.findUnique({
+export async function getSearchLogById(searchId: string): Promise<SearchLogDetail | null> {
+  const searchLog = await prisma.searchLog.findUnique({
     where: {
-      id: scanId
+      id: searchId
     },
     select: {
       id: true,
       createdAt: true,
-      query: true,
+      status: true,
       mode: true,
+      query: true,
       selectedCondition: true,
-      storePrice: true,
-      sellerShippingCost: true,
-      feeRate: true,
-      packagingCost: true,
-      promotedListingCost: true,
-      safetyBuffer: true,
-      targetProfit: true,
-      estimatedLowPrice: true,
-      estimatedMedianPrice: true,
-      estimatedHighPrice: true,
-      suggestedListPrice: true,
-      estimatedProfit: true,
-      roi: true,
-      confidence: true,
-      decision: true,
-      reason: true,
-      listingCount: true,
+      resultsCondition: true,
+      buyingOptions: true,
+      minPrice: true,
+      maxPrice: true,
+      freeShipping: true,
+      sort: true,
+      limit: true,
+      excludeWords: true,
+      minMatchScore: true,
+      listingAgeDays: true,
+      marketplaceId: true,
+      environment: true,
+      totalReturned: true,
       excludedCount: true,
-      manualSoldComps: {
-        orderBy: {
-          displayOrder: 'asc'
-        },
-        select: {
-          title: true,
-          soldPrice: true,
-          shippingCost: true,
-          conditionLabel: true,
-          soldDate: true,
-          notes: true
-        }
-      },
-      listings: {
-        orderBy: {
-          matchScore: 'desc'
-        },
-        select: {
-          title: true,
-          price: true,
-          currency: true,
-          shippingCost: true,
-          shippingKnown: true,
-          totalPrice: true,
-          conditionLabel: true,
-          conditionId: true,
-          sellerUsername: true,
-          sellerFeedbackPercentage: true,
-          itemLocation: true,
-          itemUrl: true,
-          itemId: true,
-          matchScore: true,
-          primaryImageUrl: true,
-          thumbnailUrl: true,
-          additionalImageUrls: true,
-          itemCreationDate: true,
-          itemOriginDate: true,
-          itemEndDate: true,
-          buyingOptions: true
-        }
-      }
+      fallbackApplied: true,
+      fallbackReason: true,
+      errorMessage: true
     }
   })
 
-  if (!scan) {
+  if (!searchLog) {
     return null
   }
 
-  return {
-    id: scan.id,
-    createdAt: scan.createdAt,
-    query: scan.query,
-    mode: scan.mode as ScanSummary['mode'],
-    selectedCondition: scan.selectedCondition as ScanSummary['selectedCondition'],
-    storePrice: scan.storePrice,
-    sellerShippingCost: scan.sellerShippingCost,
-    feeRate: scan.feeRate,
-    packagingCost: scan.packagingCost,
-    promotedListingCost: scan.promotedListingCost,
-    safetyBuffer: scan.safetyBuffer,
-    targetProfit: scan.targetProfit,
-    estimatedLowPrice: scan.estimatedLowPrice,
-    estimatedMedianPrice: scan.estimatedMedianPrice,
-    estimatedHighPrice: scan.estimatedHighPrice,
-    suggestedListPrice: scan.suggestedListPrice,
-    estimatedProfit: scan.estimatedProfit,
-    roi: scan.roi,
-    confidence: scan.confidence as ScanSummary['confidence'],
-    decision: scan.decision as ScanSummary['decision'],
-    reason: scan.reason,
-    listingCount: scan.listingCount,
-    excludedCount: scan.excludedCount,
-    manualSoldComps: scan.manualSoldComps.map(mapStoredManualSoldComp),
-    listings: scan.listings.map(mapStoredListing)
-  }
+  return mapSearchLogDetail(searchLog)
 }

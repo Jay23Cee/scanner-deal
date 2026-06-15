@@ -1,17 +1,35 @@
 const BROWSE_SCOPE = 'https://api.ebay.com/oauth/api_scope'
-const EBAY_ENVIRONMENTS = {
-  production: {
-    tokenUrl: 'https://api.ebay.com/identity/v1/oauth2/token',
-    browseBaseUrl: 'https://api.ebay.com/buy/browse/v1',
-    sellFulfillmentBaseUrl: 'https://api.ebay.com/sell/fulfillment/v1',
-    consentUrl: 'https://auth.ebay.com/oauth2/authorize'
-  },
-  sandbox: {
-    tokenUrl: 'https://api.sandbox.ebay.com/identity/v1/oauth2/token',
-    browseBaseUrl: 'https://api.sandbox.ebay.com/buy/browse/v1',
-    sellFulfillmentBaseUrl: 'https://api.sandbox.ebay.com/sell/fulfillment/v1',
-    consentUrl: 'https://auth.sandbox.ebay.com/oauth2/authorize'
+
+function buildEbayEnvironmentConfig(input: {
+  apiBaseUrl: string
+  authBaseUrl: string
+  clientIdEnvVar: string
+  clientSecretEnvVar: string
+}) {
+  return {
+    apiBaseUrl: input.apiBaseUrl,
+    tokenUrl: `${input.apiBaseUrl}/identity/v1/oauth2/token`,
+    browseBaseUrl: `${input.apiBaseUrl}/buy/browse/v1`,
+    sellFulfillmentBaseUrl: `${input.apiBaseUrl}/sell/fulfillment/v1`,
+    consentUrl: `${input.authBaseUrl}/oauth2/authorize`,
+    clientIdEnvVar: input.clientIdEnvVar,
+    clientSecretEnvVar: input.clientSecretEnvVar
   }
+}
+
+const EBAY_ENVIRONMENTS = {
+  production: buildEbayEnvironmentConfig({
+    apiBaseUrl: 'https://api.ebay.com',
+    authBaseUrl: 'https://auth.ebay.com',
+    clientIdEnvVar: 'EBAY_CLIENT_ID',
+    clientSecretEnvVar: 'EBAY_CLIENT_SECRET'
+  }),
+  sandbox: buildEbayEnvironmentConfig({
+    apiBaseUrl: 'https://api.sandbox.ebay.com',
+    authBaseUrl: 'https://auth.sandbox.ebay.com',
+    clientIdEnvVar: 'EBAY_SANDBOX_CLIENT_ID',
+    clientSecretEnvVar: 'EBAY_SANDBOX_CLIENT_SECRET'
+  })
 } as const
 const SANDBOX_KEY_PATTERN = /(^|[-_])SBX(?=$|[-_])/i
 const PRODUCTION_KEY_PATTERNS = [/(^|[-_])PRD(?=$|[-_])/i, /(^|[-_])PROD(?=$|[-_])/i] as const
@@ -33,6 +51,7 @@ export class EbayApiError extends Error {
 
 export interface EbayServerConfig {
   environment: EbayEnvironment
+  apiBaseUrl: string
   tokenUrl: string
   browseBaseUrl: string
   sellFulfillmentBaseUrl: string
@@ -76,6 +95,8 @@ function detectCredentialEnvironment(value: string): EbayEnvironment | null {
 
 function validateCredentialEnvironment(input: {
   environment: EbayEnvironment
+  clientIdVarName: string
+  clientSecretVarName: string
   clientId: string
   clientSecret: string
 }) {
@@ -88,7 +109,7 @@ function validateCredentialEnvironment(input: {
     clientIdEnvironment !== clientSecretEnvironment
   ) {
     throw new EbayApiError(
-      'EBAY_CLIENT_ID and EBAY_CLIENT_SECRET appear to come from different eBay environments. Use App ID and Cert ID from the same Application Keys environment.',
+      `${input.clientIdVarName} and ${input.clientSecretVarName} appear to come from different eBay environments. Use App ID and Cert ID from the same Application Keys environment.`,
       500
     )
   }
@@ -121,6 +142,7 @@ export function getEbayServerConfig(): EbayServerConfig {
 
 export interface EbayBaseConfig {
   environment: EbayEnvironment
+  apiBaseUrl: string
   tokenUrl: string
   browseBaseUrl: string
   sellFulfillmentBaseUrl: string
@@ -129,14 +151,36 @@ export interface EbayBaseConfig {
   clientSecret: string
 }
 
+export function getEbayCredentialEnvVarNames(
+  rawValue: string | undefined = process.env.EBAY_ENV
+) {
+  const environment = getCurrentEbayEnvironment(rawValue)
+  const config = EBAY_ENVIRONMENTS[environment]
+
+  return {
+    clientIdVarName: config.clientIdEnvVar,
+    clientSecretVarName: config.clientSecretEnvVar
+  }
+}
+
+function getEbayCredentialValues(environment: EbayEnvironment) {
+  const config = EBAY_ENVIRONMENTS[environment]
+
+  return {
+    clientIdVarName: config.clientIdEnvVar,
+    clientSecretVarName: config.clientSecretEnvVar,
+    clientId: process.env[config.clientIdEnvVar]?.trim() || null,
+    clientSecret: process.env[config.clientSecretEnvVar]?.trim() || null
+  }
+}
+
 export function getEbayBaseConfig(): EbayBaseConfig {
   const environment = getCurrentEbayEnvironment(process.env.EBAY_ENV)
-  const clientId = process.env.EBAY_CLIENT_ID?.trim()
-  const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim()
+  const credentials = getEbayCredentialValues(environment)
 
   const missing = [
-    !clientId && 'EBAY_CLIENT_ID',
-    !clientSecret && 'EBAY_CLIENT_SECRET'
+    !credentials.clientId && credentials.clientIdVarName,
+    !credentials.clientSecret && credentials.clientSecretVarName
   ].filter(Boolean)
 
   if (missing.length > 0) {
@@ -148,19 +192,22 @@ export function getEbayBaseConfig(): EbayBaseConfig {
 
   validateCredentialEnvironment({
     environment,
-    clientId: clientId!,
-    clientSecret: clientSecret!
+    clientIdVarName: credentials.clientIdVarName,
+    clientSecretVarName: credentials.clientSecretVarName,
+    clientId: credentials.clientId!,
+    clientSecret: credentials.clientSecret!
   })
 
   const endpoints = EBAY_ENVIRONMENTS[environment]
   return {
     environment,
+    apiBaseUrl: endpoints.apiBaseUrl,
     tokenUrl: endpoints.tokenUrl,
     browseBaseUrl: endpoints.browseBaseUrl,
     sellFulfillmentBaseUrl: endpoints.sellFulfillmentBaseUrl,
     consentUrl: endpoints.consentUrl,
-    clientId: clientId!,
-    clientSecret: clientSecret!
+    clientId: credentials.clientId!,
+    clientSecret: credentials.clientSecret!
   }
 }
 

@@ -46,6 +46,26 @@ function buildSearchPayload(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function buildImageSearchPayload(overrides: Record<string, unknown> = {}) {
+  const detectedTitle =
+    (overrides.detectedTitle as string | undefined) ??
+    'Texas Instruments TI 84 Plus CE Graphing Calculator Black'
+
+  return {
+    detectedTitle,
+    session:
+      overrides.session === undefined
+        ? buildSearchPayload({
+            query: detectedTitle,
+            totalReturned: 1,
+            rawListings: [buildListing('image-1')],
+            suggestedComparisonItemIds: ['image-1']
+          })
+        : overrides.session,
+    ...overrides
+  }
+}
+
 async function installLoadCounter(page: Page) {
   await page.addInitScript(() => {
     const key = '__scannerLoadCount'
@@ -58,6 +78,10 @@ async function expectNoReload(page: Page) {
   await expect.poll(() =>
     page.evaluate(() => Number(window.sessionStorage.getItem('__scannerLoadCount') ?? '0'))
   ).toBe(1)
+}
+
+function buildExpectedManualFallbackUrl(baseUrl: string, query: string) {
+  return `${baseUrl}/ebay/sold-comps?query=${query}&mode=manual`
 }
 
 test.describe('scanner mobile submit flow', () => {
@@ -241,5 +265,110 @@ test.describe('scanner mobile submit flow', () => {
     await expect(deck.locator('[data-slide-index="0"][aria-current="true"]')).toHaveCount(1)
     await expect(page.getByText('1 / 3')).toBeVisible()
     await expectNoReload(page)
+  })
+
+  test('processes multiple gallery photos into a swipe deck and matching session count', async ({ page }) => {
+    let imageRequestCount = 0
+    const imagePayloads = [
+      buildImageSearchPayload({
+        detectedTitle: 'Canon AE-1 Program 35mm Camera Body',
+        session: buildSearchPayload({
+          query: 'Canon AE-1 Program 35mm Camera Body',
+          totalReturned: 1,
+          rawListings: [buildListing('camera-1')],
+          suggestedComparisonItemIds: ['camera-1']
+        })
+      }),
+      buildImageSearchPayload({
+        detectedTitle: 'Sony PSP 3000 Black Console',
+        session: buildSearchPayload({
+          query: 'Sony PSP 3000 Black Console',
+          totalReturned: 1,
+          rawListings: [buildListing('psp-1')],
+          suggestedComparisonItemIds: ['psp-1']
+        })
+      })
+    ]
+
+    await installLoadCounter(page)
+
+    await page.route('**/api/scanner/image-search', async (route) => {
+      const payload = imagePayloads[imageRequestCount]
+      imageRequestCount += 1
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(payload)
+      })
+    })
+
+    await page.goto('/scanner')
+
+    await page.locator('#scanner-image-choose-photo-input').setInputFiles([
+      {
+        name: 'camera.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('camera-image')
+      },
+      {
+        name: 'psp.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('psp-image')
+      }
+    ])
+
+    const deck = page.getByRole('region', { name: 'Picture search results swipe deck' })
+
+    await expect(page.getByText('2 picture searches added to board.')).toBeVisible()
+    await expect(page.getByText('2 searches in session')).toBeVisible()
+    await expect(page.getByText('1 / 2')).toBeVisible()
+    await expect(deck.locator('[data-slide-index="0"][aria-current="true"]')).toHaveCount(1)
+    const soldCompsLink = deck
+      .locator('[data-slide-index="0"]')
+      .getByRole('link', { name: 'Open Sold Comps' })
+    await expect(soldCompsLink).toBeVisible()
+    await expect(soldCompsLink).toHaveAttribute(
+      'href',
+      '/ebay/sold-comps?query=Canon+AE-1+Program+35mm+Camera+Body'
+    )
+    await expect(soldCompsLink).toHaveAttribute('target', '_blank')
+    await expect(soldCompsLink).toHaveAttribute('rel', 'noopener noreferrer')
+
+    await page.getByRole('button', { name: 'Next photo result' }).tap()
+    await expect(deck.locator('[data-slide-index="1"][aria-current="true"]')).toHaveCount(1)
+    await expect(page.getByText('2 / 2')).toBeVisible()
+    await expect.poll(() => imageRequestCount).toBe(2)
+    await expectNoReload(page)
+  })
+
+  test('renders the platform-specific sold comps handoff page before the final eBay link', async ({ page }, testInfo) => {
+    await page.goto('/ebay/sold-comps?query=Canon%20AE-1%20Program%2035mm%20Camera%20Body')
+
+    await expect(page.getByText('Open sold comps in the browser')).toBeVisible()
+    await expect(page.getByText('Canon AE-1 Program 35mm Camera Body')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Copy eBay URL' })).toBeVisible()
+
+    if (testInfo.project.name === 'android-chromium') {
+      const chromeLauncher = page.getByRole('link', { name: 'Open in Chrome' })
+      await expect(chromeLauncher).toBeVisible()
+      await expect(chromeLauncher).toHaveAttribute(
+        'href',
+        `intent://www.ebay.com/sch/i.html?_nkw=Canon+AE-1+Program+35mm+Camera+Body&_ipg=120&LH_Sold=1&LH_Complete=1#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(
+          buildExpectedManualFallbackUrl('http://127.0.0.1:3001', 'Canon+AE-1+Program+35mm+Camera+Body')
+        )};end`
+      )
+      await expect(page.getByRole('link', { name: 'Try direct eBay link' })).toHaveAttribute(
+        'href',
+        'https://www.ebay.com/sch/i.html?_nkw=Canon+AE-1+Program+35mm+Camera+Body&_ipg=120&LH_Sold=1&LH_Complete=1'
+      )
+    } else {
+      await expect(page.getByRole('link', { name: 'Open in Chrome' })).toHaveCount(0)
+      await expect(page.getByRole('link', { name: 'Continue to eBay' })).toHaveCount(0)
+      await expect(page.getByRole('link', { name: 'Try direct eBay link' })).toHaveAttribute(
+        'href',
+        'https://www.ebay.com/sch/i.html?_nkw=Canon+AE-1+Program+35mm+Camera+Body&_ipg=120&LH_Sold=1&LH_Complete=1'
+      )
+    }
   })
 })

@@ -34,6 +34,7 @@ export async function POST(request: Request) {
       data: {
         mode: body.mode,
         query: body.query.trim(),
+        soldSearchQuery: body.soldSearchQuery.trim(),
         selectedCondition: body.condition,
         storePrice: body.storePrice,
         sellerShippingCost: body.sellerShippingCost,

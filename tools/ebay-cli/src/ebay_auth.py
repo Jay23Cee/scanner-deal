@@ -22,10 +22,14 @@ ENVIRONMENT_ENDPOINTS: dict[EbayEnvironment, dict[str, str]] = {
     "production": {
         "token_url": "https://api.ebay.com/identity/v1/oauth2/token",
         "browse_base_url": "https://api.ebay.com/buy/browse/v1",
+        "client_id_env_var": "EBAY_CLIENT_ID",
+        "client_secret_env_var": "EBAY_CLIENT_SECRET",
     },
     "sandbox": {
         "token_url": "https://api.sandbox.ebay.com/identity/v1/oauth2/token",
         "browse_base_url": "https://api.sandbox.ebay.com/buy/browse/v1",
+        "client_id_env_var": "EBAY_SANDBOX_CLIENT_ID",
+        "client_secret_env_var": "EBAY_SANDBOX_CLIENT_SECRET",
     },
 }
 
@@ -72,7 +76,11 @@ def _detect_credential_environment(value: str) -> EbayEnvironment | None:
 
 
 def _validate_credential_environment(
-    environment: EbayEnvironment, client_id: str, client_secret: str
+    environment: EbayEnvironment,
+    client_id_env_var: str,
+    client_secret_env_var: str,
+    client_id: str,
+    client_secret: str,
 ) -> None:
     client_id_environment = _detect_credential_environment(client_id)
     client_secret_environment = _detect_credential_environment(client_secret)
@@ -83,9 +91,9 @@ def _validate_credential_environment(
         and client_id_environment != client_secret_environment
     ):
         raise EbayCliError(
-            "EBAY_CLIENT_ID and EBAY_CLIENT_SECRET appear to come from different "
-            "eBay environments. Use App ID and Cert ID from the same Application "
-            "Keys environment."
+            f"{client_id_env_var} and {client_secret_env_var} appear to come from "
+            "different eBay environments. Use App ID and Cert ID from the same "
+            "Application Keys environment."
         )
 
     detected_environment = client_id_environment or client_secret_environment
@@ -106,9 +114,13 @@ def load_config() -> EbayConfig:
     load_dotenv(ROOT_ENV_PATH)
 
     environment = _parse_environment(getenv("EBAY_ENV") or "")
+    endpoints = ENVIRONMENT_ENDPOINTS[environment]
+    client_id_env_var = endpoints["client_id_env_var"]
+    client_secret_env_var = endpoints["client_secret_env_var"]
     raw_values = {
-        name: (getenv(name) or "").strip()
-        for name in ("EBAY_CLIENT_ID", "EBAY_CLIENT_SECRET", "EBAY_MARKETPLACE_ID")
+        client_id_env_var: (getenv(client_id_env_var) or "").strip(),
+        client_secret_env_var: (getenv(client_secret_env_var) or "").strip(),
+        "EBAY_MARKETPLACE_ID": (getenv("EBAY_MARKETPLACE_ID") or "").strip(),
     }
     missing = [name for name, value in raw_values.items() if not value]
     if missing:
@@ -120,17 +132,18 @@ def load_config() -> EbayConfig:
 
     _validate_credential_environment(
         environment,
-        raw_values["EBAY_CLIENT_ID"],
-        raw_values["EBAY_CLIENT_SECRET"],
+        client_id_env_var,
+        client_secret_env_var,
+        raw_values[client_id_env_var],
+        raw_values[client_secret_env_var],
     )
 
-    endpoints = ENVIRONMENT_ENDPOINTS[environment]
     return EbayConfig(
         environment=environment,
         token_url=endpoints["token_url"],
         browse_base_url=endpoints["browse_base_url"],
-        client_id=raw_values["EBAY_CLIENT_ID"],
-        client_secret=raw_values["EBAY_CLIENT_SECRET"],
+        client_id=raw_values[client_id_env_var],
+        client_secret=raw_values[client_secret_env_var],
         marketplace_id=raw_values["EBAY_MARKETPLACE_ID"],
     )
 

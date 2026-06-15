@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { prisma } from '@/lib/db/client'
+import { getScanById } from '@/lib/analyses'
 import { resetTokenCache } from '@/lib/ebay/auth'
-import { getScanById } from '@/lib/history'
 import { GET as historyGet } from '../app/api/history/route'
 import { POST as analyzePost } from '../app/api/deal/analyze/route'
 import { POST as searchPost } from '../app/api/ebay/search/route'
@@ -36,6 +36,7 @@ describe('API routes', () => {
     resetTokenCache()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    await prisma.searchLog.deleteMany()
     await prisma.sellerOrder.deleteMany()
     await prisma.sellerConnection.deleteMany()
     await prisma.manualSoldCompSnapshot.deleteMany()
@@ -107,6 +108,8 @@ describe('API routes', () => {
     )
 
     const payload = await response.json()
+    const searchLogCount = await prisma.searchLog.count()
+    const searchLog = await prisma.searchLog.findFirstOrThrow()
 
     expect(response.status).toBe(200)
     expect(payload.marketplaceId).toBe('EBAY_US')
@@ -122,7 +125,21 @@ describe('API routes', () => {
       country: 'US',
       postalCode: '90001'
     })
+    expect(searchLogCount).toBe(1)
+    expect(searchLog.status).toBe('success')
+    expect(searchLog.query).toBe('iphone 15 pro max')
+    expect(searchLog.mode).toBe('keyword')
+    expect(searchLog.selectedCondition).toBe('used')
+    expect(searchLog.totalReturned).toBe(1)
+    expect(searchLog.errorMessage).toBeNull()
     expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    const historyResponse = await historyGet()
+    const historyPayload = await historyResponse.json()
+
+    expect(historyResponse.status).toBe(200)
+    expect(historyPayload.searches).toHaveLength(1)
+    expect(historyPayload.searches[0].query).toBe('iphone 15 pro max')
   })
 
   it('passes filter payload values through to the Browse search request', async () => {
@@ -172,6 +189,7 @@ describe('API routes', () => {
     )
 
     expect(response.status).toBe(200)
+    const searchLog = await prisma.searchLog.findFirstOrThrow()
 
     const browseRequestUrl = String(fetchMock.mock.calls[1]?.[0])
     expect(browseRequestUrl).toContain('gtin=012345678905')
@@ -184,6 +202,15 @@ describe('API routes', () => {
     expect(browseRequestUrl).toContain('maxDeliveryCost%3A0')
     expect(browseRequestUrl).toContain('sort=endingSoonest')
     expect(browseRequestUrl).toContain('limit=10')
+    expect(searchLog.mode).toBe('gtin')
+    expect(searchLog.selectedCondition).toBe('open_box')
+    expect(searchLog.resultsCondition).toBe('open_box')
+    expect(searchLog.buyingOptions).toBe('auction')
+    expect(searchLog.minPrice).toBe(100)
+    expect(searchLog.maxPrice).toBe(300)
+    expect(searchLog.freeShipping).toBe(true)
+    expect(searchLog.sort).toBe('ending_soon')
+    expect(searchLog.limit).toBe(10)
   })
 
   it('retries without the Browse condition filter when the filtered search returns zero items', async () => {
@@ -251,6 +278,7 @@ describe('API routes', () => {
     expect(payload.fallbackReason).toContain('retried without that Browse condition filter')
     expect(String(fetchMock.mock.calls[1]?.[0])).toContain('filter=conditions%3A%7BUSED%7D')
     expect(String(fetchMock.mock.calls[2]?.[0])).not.toContain('filter=conditions%3A%7BUSED%7D')
+    expect((await prisma.searchLog.findFirstOrThrow()).fallbackApplied).toBe(true)
   })
 
   it('returns eBay configuration mismatch errors from POST /api/ebay/search', async () => {
@@ -278,10 +306,33 @@ describe('API routes', () => {
     expect(response.status).toBe(500)
     expect(payload.error).toContain('EBAY_ENV is set to production')
     expect(payload.error).toContain('Sandbox keys')
+    const searchLog = await prisma.searchLog.findFirstOrThrow()
+    expect(searchLog.status).toBe('error')
+    expect(searchLog.errorMessage).toContain('EBAY_ENV is set to production')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('persists manually selected comparison listings and exposes enriched detail through history', async () => {
+  it('does not persist invalid search requests', async () => {
+    const response = await searchPost(
+      new Request('http://localhost/api/ebay/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'keyword',
+          query: '',
+          condition: 'used'
+        })
+      })
+    )
+
+    const payload = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(payload.error).toBeTruthy()
+    expect(await prisma.searchLog.count()).toBe(0)
+  })
+
+  it('persists manually selected comparison listings and exposes enriched detail through analyses', async () => {
     const response = await analyzePost(
       new Request('http://localhost/api/deal/analyze', {
         method: 'POST',
@@ -289,6 +340,7 @@ describe('API routes', () => {
         body: JSON.stringify({
           mode: 'keyword',
           query: 'iphone 15 pro max',
+          soldSearchQuery: 'iphone 15 pro max 256gb unlocked',
           condition: 'used',
           storePrice: 300,
           sellerShippingCost: 10,
@@ -391,6 +443,7 @@ describe('API routes', () => {
     const scanCount = await prisma.scanRecord.count()
     const listingCount = await prisma.listingSnapshot.count()
     const manualSoldCompCount = await prisma.manualSoldCompSnapshot.count()
+    const storedScan = await prisma.scanRecord.findFirstOrThrow()
     const storedListing = await prisma.listingSnapshot.findFirstOrThrow({
       orderBy: {
         matchScore: 'desc'
@@ -401,6 +454,7 @@ describe('API routes', () => {
     expect(response.status).toBe(200)
     expect(payload.scanId).toBeTruthy()
     expect(scanCount).toBe(1)
+    expect(storedScan.soldSearchQuery).toBe('iphone 15 pro max 256gb unlocked')
     expect(listingCount).toBe(5)
     expect(manualSoldCompCount).toBe(1)
     expect(storedListing.primaryImageUrl).toBe('https://example.com/image.jpg')
@@ -425,6 +479,7 @@ describe('API routes', () => {
     const scanDetail = await getScanById(payload.scanId)
 
     expect(scanDetail?.listings).toHaveLength(5)
+    expect(scanDetail?.soldSearchQuery).toBe('iphone 15 pro max 256gb unlocked')
     expect(scanDetail?.manualSoldComps).toEqual([
       {
         title: 'iPhone 15 Pro Max sold comp',
@@ -444,12 +499,5 @@ describe('API routes', () => {
       country: 'US',
       postalCode: '90001'
     })
-
-    const historyResponse = await historyGet()
-    const historyPayload = await historyResponse.json()
-
-    expect(historyResponse.status).toBe(200)
-    expect(historyPayload.scans).toHaveLength(1)
-    expect(historyPayload.scans[0].query).toBe('iphone 15 pro max')
   })
 })

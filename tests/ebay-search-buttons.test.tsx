@@ -9,7 +9,7 @@ import {
 } from '@/components/scanner/EbaySearchButtons'
 import {
   buildEbayActiveSearchUrl,
-  buildEbaySoldCompsUrl
+  buildSoldCompsHandoffPath
 } from '@/lib/ebayLinks'
 
 describe('EbaySearchButtons', () => {
@@ -21,22 +21,22 @@ describe('EbaySearchButtons', () => {
     cleanup()
   })
 
-  it('opens the sold comps search in a new tab without showing a warning', async () => {
-    const user = userEvent.setup()
-    const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(
-      () => ({ closed: false } as Window)
-    )
-
+  it('renders the sold comps search as a new-tab link', () => {
     render(<SoldCompsButton query="TI 84 Plus CE" />)
 
-    await user.click(screen.getByRole('button', { name: 'Open Sold Comps' }))
-
-    expect(windowOpenSpy).toHaveBeenCalledWith(
-      buildEbaySoldCompsUrl('TI 84 Plus CE'),
-      '_blank',
-      'noopener,noreferrer'
-    )
+    const soldCompsLink = screen.getByRole('link', { name: 'Open Sold Comps' })
+    expect(soldCompsLink.getAttribute('href')).toBe(buildSoldCompsHandoffPath('TI 84 Plus CE'))
+    expect(soldCompsLink.getAttribute('target')).toBe('_blank')
+    expect(soldCompsLink.getAttribute('rel')).toBe('noopener noreferrer')
     expect(screen.queryByText('Allow pop-ups to open eBay in a new tab.')).toBeNull()
+  })
+
+  it('renders a disabled sold comps control when the query is blank', () => {
+    render(<SoldCompsButton query="   " />)
+
+    const soldCompsButton = screen.getByRole('button', { name: 'Open Sold Comps' })
+    expect(soldCompsButton).toHaveProperty('disabled', true)
+    expect(screen.queryByRole('link', { name: 'Open Sold Comps' })).toBeNull()
   })
 
   it('shows a warning instead of redirecting when the popup is blocked', async () => {
